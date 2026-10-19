@@ -16,15 +16,22 @@ const d = durations({
 });
 const ctx: M.Ctx = { d, trustees: ["a", "b", "c"], quorum: 2 };
 
-// Run the hourly cron from `from` to `to`, collecting actions.
-const run = (s: M.State, from: number, to: number) => {
+// Run the hourly cron from `from` to `to`, collecting actions. Owner pings are
+// delivered immediately unless `delivered` says otherwise.
+const run = (s: M.State, from: number, to: number, delivered = (_t: number) => true) => {
   const actions: { at: number; action: M.Action }[] = [];
   for (let t = from; t <= to; t += HOUR) {
     const r = M.tick(s, t, ctx);
     s = r.state;
+    if (r.actions.some((a) => a.kind === "ownerPing")) s = delivered(t) ? M.pingDelivered(s, t) : M.pingFailed(s, t);
     actions.push(...r.actions.map((action) => ({ at: t, action })));
   }
   return { s, actions };
+};
+
+const confirm = (s: M.State, t: number, id: string) => {
+  const r = M.trusteeConfirm(s, t, id, ctx);
+  return { ...r, state: r.actions.some((a) => a.kind === "ownerPing") ? M.pingDelivered(r.state, t) : r.state };
 };
 
 const kinds = (xs: { action: M.Action }[]) => xs.map((x) => x.action.kind);
@@ -79,13 +86,50 @@ describe("trustees", () => {
     expect(s.phase).toBe("asking");
     s = M.trusteeConfirm(s, 52 * DAY, "a", ctx).state;
     expect(Object.keys(s.confirmed)).toEqual(["a"]);
-    const r = M.trusteeConfirm(s, 53 * DAY, "b", ctx);
+    const r = confirm(s, 53 * DAY, "b");
     expect(r.state.phase).toBe("cooling");
     expect(r.actions.map((a) => a.kind)).toContain("cooling");
     const done = run(r.state, 53 * DAY, 53 * DAY + 49 * HOUR);
     expect(done.s.phase).toBe("released");
     expect(kinds(done.actions).filter((k) => k === "release").length).toBe(1);
     expect(kinds(done.actions).filter((k) => k === "ownerPing").length).toBe(7);
+  });
+
+  test("pings that are never delivered never lead to asking trustees", () => {
+    const { s, actions } = run(M.initial(0), 0, 200 * DAY, () => false);
+    expect(s.phase).toBe("alive");
+    expect(actions.filter((a) => a.action.kind === "askTrustee").length).toBe(0);
+    // Failed pings are retried every 6 hours.
+    expect(actions.filter((a) => a.action.kind === "ownerPing").length).toBe(170 * 4 + 1);
+  });
+
+  test("asking waits for the second delivered ping", () => {
+    // Only pings from day 60 on get through.
+    const { s } = run(M.initial(0), 0, 61 * DAY, (t) => t >= 60 * DAY);
+    expect(s.phase).toBe("alive");
+    expect(s.pingsDelivered).toBe(1);
+    expect(run(s, 61 * DAY, 64 * DAY + HOUR, () => true).s.phase).toBe("asking");
+  });
+
+  test("cooling counts from the first delivered urgent ping", () => {
+    let s = asking();
+    s = M.trusteeConfirm(s, 52 * DAY, "a", ctx).state;
+    s = M.trusteeConfirm(s, 52 * DAY, "b", ctx).state;
+    s = M.pingFailed(s, 52 * DAY - 6 * HOUR);
+    // Undelivered for 3 days: no release, retries every 6 hours.
+    let r = run(s, 52 * DAY, 55 * DAY - HOUR, () => false);
+    expect(r.s.phase).toBe("cooling");
+    expect(r.s.coolingNoticeAt).toBeNull();
+    r = run(r.s, 55 * DAY, 55 * DAY + 47 * HOUR);
+    expect(r.s.coolingNoticeAt).toBe(55 * DAY);
+    expect(r.s.phase).toBe("cooling");
+    expect(run(r.s, 55 * DAY + 48 * HOUR, 55 * DAY + 48 * HOUR).s.phase).toBe("released");
+  });
+
+  test("an ask that reached nobody is retried next tick", () => {
+    let s = asking();
+    s = M.askFailed(s, "a");
+    expect(M.tick(s, 51 * DAY + HOUR, ctx).actions).toContainEqual({ kind: "askTrustee", id: "a", again: false });
   });
 
   test("owner can cancel during cooling", () => {

@@ -13,6 +13,8 @@ Nothing is released without trustee confirmation. There is no timeout fallback.
 | cooling | `quorum` trustees confirmed. The owner gets urgent pings every `coolingPingEvery` for `cooling` (48h). |
 | released | Messages go to each recipient by email, plus a Telegram copy if they linked the bot. Attachments are per-recipient links to R2. Failed sends are retried hourly. |
 
+Only **delivered** owner pings count. A ping is delivered when Telegram accepts it, the Cloudflare fallback accepts it, or Resend later reports `delivered`. Bounced or unconfirmed pings are retried every 6 hours. Trustees are not asked until at least 2 pings were delivered, and the cooling period counts from the first urgent ping that was delivered. A trustee ask that reached nobody is retried on the next tick.
+
 Any owner check-in (button, email link, `/alive`), or any trustee answering "fine", resets everything back to *alive*. `/pause 60d` postpones the next ping, capped at `maxPause`. Email links only act on a POST from the page, so link scanners can't trigger anything.
 
 ## Stack

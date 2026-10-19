@@ -148,12 +148,27 @@ const webhook = async (c: Config) => {
   console.log(`webhook set to ${baseUrl(c)}/tg`);
 };
 
+// Verified destination addresses, i.e. who can receive the Cloudflare fallback.
+const cloudflareVerified = async () => {
+  const res = await fetch(
+    `https://api.cloudflare.com/client/v4/accounts/${need("CLOUDFLARE_ACCOUNT_ID")}/email/routing/addresses?per_page=50`,
+    { headers: { authorization: `Bearer ${need("CLOUDFLARE_API_TOKEN")}` } },
+  );
+  const data = (await res.json()) as { result?: { email: string; verified: string | null }[] };
+  return new Set((data.result ?? []).filter((a) => a.verified).map((a) => a.email));
+};
+
 const status = async (c: Config) => {
   const s = (await (await admin(c, "status")).json()) as any;
   console.log(s.summary ?? "no state yet (run sync)");
   console.log(`messages: ${s.messages}`);
   const linked = new Set(s.chats.map((x: any) => x.person_id));
-  for (const p of people(c)) console.log(`  ${linked.has(p.id) ? "✓" : "·"} telegram ${p.id}`);
+  const verified = await cloudflareVerified();
+  for (const p of people(c)) {
+    const fallback = p.id === c.owner.id || c.trustees.includes(p);
+    const mail = fallback ? `${verified.has(p.email) ? "✓" : "·"} cloudflare email` : "";
+    console.log(`  ${p.id.padEnd(12)} ${linked.has(p.id) ? "✓" : "·"} telegram  ${mail}`);
+  }
   if (s.deliveries.length) console.table(s.deliveries);
   if (process.argv.includes("--events")) console.table(s.events);
 };

@@ -65,24 +65,37 @@ const ctxOf = (c: Config): M.Ctx => ({
   quorum: c.quorum,
 });
 
+const getState = async (env: Env) => {
+  const cur = await kvGet<M.State>(env, "state");
+  return cur ? { value: M.normalize(cur.value), version: cur.version } : null;
+};
+
 // Optimistic update of the single state row; retried if the cron and a webhook race.
-const mutate = async (env: Env, c: Config, f: (s: M.State) => M.Step) => {
+const update = async (env: Env, f: (s: M.State) => M.Step) => {
   for (let attempt = 0; attempt < 5; attempt++) {
-    const cur = await kvGet<M.State>(env, "state");
+    const cur = await getState(env);
     if (!cur) return null;
     const step = f(cur.value);
-    if (step.state === cur.value) return step;
+    if (step.state === cur.value) return { step, changed: false };
     const res = await env.db
       .prepare("UPDATE kv SET value = ?, version = version + 1 WHERE key = 'state' AND version = ?")
       .bind(JSON.stringify(step.state), cur.version)
       .run();
-    if (res.meta.changes === 1) {
-      if (step.actions.length) await log(env, "actions", step.actions);
-      await perform(env, c, step);
-      return step;
-    }
+    if (res.meta.changes === 1) return { step, changed: true };
   }
   throw new Error("state update conflict");
+};
+
+// Applies a transition, performs its actions, then feeds delivery results back.
+const mutate = async (env: Env, c: Config, f: (s: M.State) => M.Step) => {
+  const r = await update(env, f);
+  if (!r) return null;
+  if (r.changed && r.step.actions.length) {
+    await log(env, "actions", r.step.actions);
+    const results = await perform(env, c, r.step);
+    if (results.length) await update(env, (s) => ({ state: results.reduce((acc, g) => g(acc), s), actions: [] }));
+  }
+  return r.step;
 };
 
 const chatOf = async (env: Env, personId: string) =>
@@ -131,20 +144,29 @@ const resend = async (env: Env, c: Config, to: string, subject: string, text: st
     body: JSON.stringify({ from: `posthumail <${c.from}>`, to: [to], subject, text }),
   });
   if (!res.ok) throw new Error(`resend: ${res.status} ${await res.text()}`);
+  return ((await res.json()) as { id?: string }).id ?? null;
 };
 
 // Resend first; Cloudflare Email Routing as a fallback, which only reaches the
 // owner and trustees because those are the verified destination addresses.
+// Returns the Resend id to track delivery, or null when Cloudflare took it.
 const email = async (env: Env, c: Config, person: Person, subject: string, text: string, idempotencyKey?: string) => {
   try {
-    await resend(env, c, person.email, subject, text, idempotencyKey);
+    return { resendId: await resend(env, c, person.email, subject, text, idempotencyKey) };
   } catch (e) {
     const verified = person.id === c.owner.id || c.trustees.some((t) => t.id === person.id);
     if (!verified) throw e;
     await log(env, "resend_fallback", { to: person.id, error: String(e) });
     await env.mail.send({ from: { name: "posthumail", email: c.from }, to: person.email, subject, text });
+    return { resendId: null };
   }
 };
+
+interface Outcome {
+  telegram: boolean;
+  // Accepted by an email provider: a Resend id still to be confirmed, or `true` for the Cloudflare fallback.
+  email: string | true | null;
+}
 
 // Telegram and email are independent: one failing must not block the other.
 const notify = async (
@@ -152,36 +174,77 @@ const notify = async (
   c: Config,
   person: Person,
   msg: { text: string; subject: string; emailText?: string; buttons?: Button[] },
-) => {
+): Promise<Outcome> => {
   const chat = await chatOf(env, person.id);
-  const results = await Promise.allSettled([
-    chat === null ? Promise.resolve() : tgSend(env, chat, msg.text, msg.buttons),
+  const [tgr, mail] = await Promise.allSettled([
+    chat === null ? Promise.reject(new Error("no telegram")) : tgSend(env, chat, msg.text, msg.buttons),
     email(env, c, person, msg.subject, msg.emailText ?? msg.text),
   ]);
-  const errors = results.flatMap((r) => (r.status === "rejected" ? [String(r.reason)] : []));
+  const errors = [tgr, mail].flatMap((r) =>
+    r.status === "rejected" && String(r.reason) !== "Error: no telegram" ? [String(r.reason)] : [],
+  );
   if (errors.length) await log(env, "notify_error", { to: person.id, errors });
+  return {
+    telegram: tgr.status === "fulfilled",
+    email: mail.status === "fulfilled" ? (mail.value.resendId ?? true) : null,
+  };
 };
 
 const trusteeById = (c: Config, id: string) => c.trustees.find((t) => t.id === id)!;
 
+interface PendingPing {
+  resendId: string;
+  at: number;
+}
+
+// An owner ping counts as delivered when Telegram took it, the Cloudflare fallback
+// took it, or Resend later reports it delivered (checked on the next ticks).
+const ownerPingResult = async (env: Env, o: Outcome, at: number): Promise<(s: M.State) => M.State> => {
+  if (o.telegram || o.email === true) return (s) => M.pingDelivered(s, at);
+  if (typeof o.email === "string") {
+    await kvPut(env, "ping_pending", { resendId: o.email, at } satisfies PendingPing);
+    return (s) => s;
+  }
+  return (s) => M.pingFailed(s, at);
+};
+
+const DELIVERED = new Set(["delivered", "opened", "clicked"]);
+const FAILED = new Set(["bounced", "complained", "failed", "canceled", "suppressed"]);
+
+const resolvePendingPing = async (env: Env, now: number) => {
+  const pending = (await kvGet<PendingPing>(env, "ping_pending"))?.value;
+  if (!pending) return;
+  const res = await fetch(`https://api.resend.com/emails/${pending.resendId}`, {
+    headers: { authorization: `Bearer ${env.resendKey}` },
+  });
+  const event = res.ok ? ((await res.json()) as { last_event?: string }).last_event ?? "" : "";
+  const failed = FAILED.has(event) || now - pending.at > 6 * 3_600_000;
+  if (!DELIVERED.has(event) && !failed) return;
+  await env.db.prepare("DELETE FROM kv WHERE key = 'ping_pending'").run();
+  await log(env, "ping_result", { event, delivered: DELIVERED.has(event) });
+  await update(env, (s) => ({ state: DELIVERED.has(event) ? M.pingDelivered(s, pending.at) : M.pingFailed(s, now), actions: [] }));
+};
+
 const perform = async (env: Env, c: Config, step: M.Step) => {
   const ownerName = c.owner.name;
+  const results: ((s: M.State) => M.State)[] = [];
   for (const a of step.actions) {
     switch (a.kind) {
       case "ownerPing": {
         const text = T.owner.ping(a.reminder, a.urgent);
-        await notify(env, c, c.owner, {
+        const o = await notify(env, c, c.owner, {
           text,
           subject: T.owner.pingSubject(a.urgent),
           emailText: T.owner.pingEmail(text, await link(env, c, "c", "checkin", c.owner.id)),
           buttons: [{ text: T.owner.aliveButton, data: "alive" }],
         });
+        results.push(await ownerPingResult(env, o, Date.now()));
         break;
       }
       case "askTrustee": {
         const t = trusteeById(c, a.id);
         const text = T.trustee.ask(ownerName, a.again);
-        await notify(env, c, t, {
+        const o = await notify(env, c, t, {
           text,
           subject: T.trustee.askSubject(ownerName),
           emailText: T.trustee.askEmail(text, await link(env, c, "t", "trustee", t.id)),
@@ -190,6 +253,7 @@ const perform = async (env: Env, c: Config, step: M.Step) => {
             { text: T.trustee.diedButton, data: "died" },
           ],
         });
+        if (!o.telegram && o.email === null) results.push((s) => M.askFailed(s, a.id));
         break;
       }
       case "trusteeConfirmed": {
@@ -223,6 +287,7 @@ const perform = async (env: Env, c: Config, step: M.Step) => {
         break;
     }
   }
+  return results;
 };
 
 // ---------- release ----------
@@ -324,6 +389,7 @@ const remindUpdate = async (env: Env, c: Config, now: number) => {
 export const tick = async (env: Env, now = Date.now()) => {
   const c = await getConfig(env);
   if (!c) return;
+  await resolvePendingPing(env, now);
   const step = await mutate(env, c, (s) => M.tick(s, now, ctxOf(c)));
   if (step?.state.phase === "released") await deliver(env, c);
   else if (step) await remindUpdate(env, c, now);
@@ -417,6 +483,8 @@ const handleTelegram = async (env: Env, c: Config, u: TgUpdate) => {
       .bind(person.id, chatId, Date.now())
       .run();
     await log(env, "linked", { person: person.id });
+    const ownerChat = person.id === c.owner.id ? null : await chatOf(env, c.owner.id);
+    if (ownerChat !== null) await tgSend(env, ownerChat, T.owner.linked(person.name)).catch(() => {});
     return tgSend(env, chatId, T.bot.linked(person.name));
   }
 
@@ -446,7 +514,7 @@ const handleTelegram = async (env: Env, c: Config, u: TgUpdate) => {
       return tgSend(env, chatId, step ? T.owner.thanks(M.dueAt(step.state, d)) : T.page.released);
     }
     if (text === "/status") {
-      const s = (await kvGet<M.State>(env, "state"))?.value;
+      const s = (await getState(env))?.value;
       return tgSend(env, chatId, s ? statusText(s, c) : "—");
     }
     return tgSend(env, chatId, T.owner.help);
@@ -494,7 +562,7 @@ const handleAdmin = async (env: Env, req: Request, path: string[]) => {
   if (route === "sync" && req.method === "POST") {
     const body = (await req.json()) as SyncBody;
     const c = validate(body.config);
-    const state = await kvGet<M.State>(env, "state");
+    const state = await getState(env);
     if (state?.value.phase === "released") return json({ error: "already released" }, 409);
     const ids = new Set(people(c).map((p) => p.id));
     const unknown = body.messages.flatMap((m) => m.recipients.filter((r) => !ids.has(r) || r === c.owner.id));
@@ -540,7 +608,7 @@ const handleAdmin = async (env: Env, req: Request, path: string[]) => {
 
   if (route === "status" && req.method === "GET") {
     const c = await getConfig(env);
-    const s = (await kvGet<M.State>(env, "state"))?.value ?? null;
+    const s = (await getState(env))?.value ?? null;
     const { results: chats } = await env.db.prepare("SELECT person_id, linked_at FROM chats").all();
     const { results: deliveries } = await env.db.prepare("SELECT * FROM deliveries").all();
     const { results: events } = await env.db.prepare("SELECT * FROM events ORDER BY id DESC LIMIT 30").all();

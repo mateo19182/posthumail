@@ -84,6 +84,7 @@ let mails: { to: string; subject: string; text: string }[];
 let tgs: { method: string; body: any }[];
 let cfMails: string[];
 let resendDown = false;
+let emailEvent = "delivered";
 const chats: Record<string, number> = { me: 1, ana: 2, luis: 3, eva: 4 };
 const realFetch = globalThis.fetch;
 
@@ -94,6 +95,7 @@ beforeEach(() => {
   tgs = [];
   cfMails = [];
   resendDown = false;
+  emailEvent = "delivered";
   env = {
     db: fakeD1(sql) as any,
     files: fakeR2() as any,
@@ -105,12 +107,15 @@ beforeEach(() => {
     adminToken: "admin",
     resendKey: "rk",
   };
-  globalThis.fetch = (async (url: string, init: RequestInit) => {
+  globalThis.fetch = (async (url: string, init: RequestInit = {}) => {
+    if (String(url).startsWith("https://api.resend.com/emails/")) return Response.json({ last_event: emailEvent });
     const body = JSON.parse(String(init.body));
     if (String(url).startsWith("https://api.resend.com")) {
       if (resendDown) return new Response("down", { status: 500 });
       mails.push({ to: body.to[0], subject: body.subject, text: body.text });
-    } else tgs.push({ method: String(url).split("/").pop()!, body });
+      return Response.json({ id: `e${mails.length}` });
+    }
+    tgs.push({ method: String(url).split("/").pop()!, body });
     return new Response("{}");
   }) as any;
   setSystemTime(new Date(T0));
@@ -274,4 +279,24 @@ test("quarterly update reminder: a week before the equinox/solstice, again on th
   await adminCall("update-sent", { method: "POST", body: JSON.stringify({ quarter: "2030-q2" }) });
   await hours(jun(21), jun(21));
   expect(reminders().length).toBe(3);
+});
+
+test("bounced pings to an owner without Telegram never escalate", async () => {
+  await setup();
+  await env.db.prepare("DELETE FROM chats WHERE person_id = 'me'").run();
+  emailEvent = "bounced";
+  await hours(0, 120 * DAY);
+  const status = (await (await adminCall("status")).json()) as any;
+  expect(status.state.phase).toBe("alive");
+  expect(mails.some((m) => m.to === "ana@x.test")).toBe(false);
+  expect(mails.length).toBeLessThan(90 * 4 + 5);
+  emailEvent = "delivered";
+  await hours(120 * DAY + 3_600_000, 130 * DAY);
+  expect(((await (await adminCall("status")).json()) as any).state.phase).toBe("asking");
+});
+
+test("trustee linking notifies the owner on Telegram", async () => {
+  await setup();
+  await tgUpdate({ message: { chat: { id: 7 }, text: `/start ${await sign(env.linkSecret, "link", "mama")}` } });
+  expect(tgs.some((t) => t.body.chat_id === chats.me && t.body.text.includes("Mamá ha vinculado"))).toBe(true);
 });
