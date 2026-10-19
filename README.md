@@ -57,7 +57,7 @@ Text, sent as-is.
 
 ## Quarterly updates
 
-These go to the blog newsletter's "Quarterly updates" segment in Resend (`updates` in the config). They go out on the solstice or equinox that closes each quarter (Mar 20, Jun 21, Sep 22, Dec 21). The Worker reminds the owner a week before, and again on the day if nothing was sent.
+These go to the blog newsletter's "Quarterly life updates" segment in Resend (`updates` in the config). Each email ends with a link to earlier updates (`archiveUrl`, the Now page section) and an unsubscribe link. They go out on the solstice or equinox that closes each quarter (Mar 20, Jun 21, Sep 22, Dec 21). The Worker reminds the owner a week before, and again on the day if nothing was sent.
 
 ```sh
 $EDITOR updates/2026-q4.md                 # frontmatter: subject. Plain text body.

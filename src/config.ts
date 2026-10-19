@@ -23,6 +23,8 @@ export interface Updates {
   segmentId: string;
   from: string;
   remind: boolean;
+  // Where earlier updates can be read; linked at the end of each email.
+  archiveUrl?: string;
 }
 
 export interface Config {

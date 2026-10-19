@@ -217,7 +217,8 @@ const update = async (c: Config, [sub, name]: string[]) => {
   if (!m) throw new Error(`${file}: missing frontmatter`);
   const { subject, blog } = parseYaml(m[1]!) as { subject?: string; blog?: string };
   if (!subject) throw new Error(`${file}: frontmatter needs 'subject'`);
-  const text = `${m[2]!.trim()}\n\n--\nUnsubscribe / Darse de baja: ${UNSUBSCRIBE}`;
+  const archive = c.updates.archiveUrl ? `Anteriores: ${c.updates.archiveUrl}\n` : "";
+  const text = `${m[2]!.trim()}\n\n--\n${archive}Darse de baja: ${UNSUBSCRIBE}`;
   const from = c.updates.from;
 
   if (process.argv.includes("--test")) {

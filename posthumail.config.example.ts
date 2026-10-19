@@ -23,10 +23,11 @@ export default {
     coolingPingEvery: "6h",
     maxPause: "180d",
   },
-  // Blog newsletter "Other updates" segment in Resend.
+  // Blog newsletter "Quarterly life updates" segment in Resend.
   updates: {
     segmentId: "34ddbeff-78cb-4190-9a29-a6746457c728",
     from: "Mateo <updates@m19182.dev>",
     remind: true,
+    archiveUrl: "https://blog.m19182.dev/now#quarterly-life-updates",
   },
 } satisfies Config;
