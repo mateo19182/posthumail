@@ -63,6 +63,8 @@ bun cli update send 2026-q4 --test         # only to the owner
 bun cli update send 2026-q4                # preview, confirm, broadcast; marks the quarter done
 ```
 
+An optional `blog: |` field in the frontmatter holds a short public version. On send, it is committed and pushed to `content/updates/` in the blog repo (`POSTHUMAIL_BLOG`, default `~/projects/blog-19182`), which lists it at the bottom of the Now page. The repo must be clean.
+
 Re-running reuses the Resend draft, so a sent update is never sent twice. The death-notice list is separate and manual: add the people you want to the config and address messages to them.
 
 ## Secrets
