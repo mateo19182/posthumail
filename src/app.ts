@@ -289,12 +289,11 @@ const checkinNow = async (env: Env, c: Config) => {
   return step ? M.dueAt(step.state, durations(c.timing)) : null;
 };
 
-// Email links only act on POST so link scanners and previews can't trigger anything.
-const handleCheckinLink = async (env: Env, c: Config, req: Request, token: string) => {
+// The check-in link acts on GET: a stray click only delays the switch, and Gmail does not prefetch links.
+const handleCheckinLink = async (env: Env, c: Config, token: string) => {
   if ((await verify(env.linkSecret, "checkin", token)) !== c.owner.id) return html(T.page.invalid, "", 404);
-  if (req.method !== "POST") return html(T.page.checkin.title, form([["alive", T.page.checkin.button]]));
   const next = await checkinNow(env, c);
-  return html(T.page.checkin.done, next ? `<p>${esc(T.owner.thanks(next))}</p>` : "");
+  return html(T.page.checkinDone, next ? `<p>${esc(T.owner.thanks(next))}</p>` : "");
 };
 
 const trusteeAction = async (env: Env, c: Config, id: string, action: string) => {
@@ -303,23 +302,21 @@ const trusteeAction = async (env: Env, c: Config, id: string, action: string) =>
     const step = await mutate(env, c, (s) => M.trusteeFine(s, now, id));
     return step?.actions.length ? T.trustee.fineRecorded(c.owner.name) : T.trustee.notAsked;
   }
-  if (action === "sure") {
+  if (action === "died") {
     const step = await mutate(env, c, (s) => M.trusteeConfirm(s, now, id, ctxOf(c)));
     return step?.actions.length ? T.trustee.recorded : T.trustee.notAsked;
   }
   return null;
 };
 
+// Trustee links only act on POST so link scanners can't confirm a death.
 const handleTrusteeLink = async (env: Env, c: Config, req: Request, token: string) => {
   const id = await verify(env.linkSecret, "trustee", token);
   if (!id || !c.trustees.some((t) => t.id === id)) return html(T.page.invalid, "", 404);
   const title = T.page.trustee(c.owner.name).title;
   if (req.method !== "POST")
     return html(title, form([["fine", T.trustee.fineButton], ["died", T.trustee.diedButton]]));
-  const action = String((await req.formData()).get("action"));
-  if (action === "died")
-    return html(T.trustee.areYouSure(c.owner.name), form([["sure", T.trustee.sureButton], ["fine", T.trustee.fineButton]]));
-  const result = await trusteeAction(env, c, id, action);
+  const result = await trusteeAction(env, c, id, String((await req.formData()).get("action")));
   return html(title, `<p>${esc(result ?? T.page.invalid)}</p>`);
 };
 
@@ -395,11 +392,6 @@ const handleTelegram = async (env: Env, c: Config, u: TgUpdate) => {
   }
 
   if (c.trustees.some((t) => t.id === person.id) && data) {
-    if (data === "died")
-      return tgSend(env, chatId, T.trustee.areYouSure(c.owner.name), [
-        { text: T.trustee.sureButton, data: "sure" },
-        { text: T.trustee.fineButton, data: "fine" },
-      ]);
     const result = await trusteeAction(env, c, person.id, data);
     if (result) return tgSend(env, chatId, result);
   }
@@ -511,8 +503,8 @@ export const fetchHandler = async (env: Env, req: Request): Promise<Response> =>
     // Always 200 so Telegram doesn't redeliver the update forever.
     return new Response("ok");
   }
-  if (first === "c" && rest[0]) return handleCheckinLink(env, c, req, rest[0]);
+  if (first === "c" && rest[0]) return handleCheckinLink(env, c, rest[0]);
   if (first === "t" && rest[0]) return handleTrusteeLink(env, c, req, rest[0]);
   if (first === "f" && rest[0]) return handleFile(env, rest[0]);
-  return html("posthumail", "<p>🕯️</p>");
+  return html("posthumail", "");
 };

@@ -161,9 +161,7 @@ test("full flow: ping, grace, staggered trustees, quorum, cooling, release", asy
   expect(mails.filter((m) => m.to === "luis@x.test").length).toBe(1);
 
   await press("ana", "died");
-  expect(tgs.at(-1)!.body.text).toContain("¿Confirmas");
-  await press("ana", "sure");
-  await press("luis", "sure");
+  await press("luis", "died");
   const status = (await (await adminCall("status")).json()) as any;
   expect(status.state.phase).toBe("cooling");
 
@@ -189,13 +187,11 @@ test("full flow: ping, grace, staggered trustees, quorum, cooling, release", asy
 test("owner check-in via email link cancels and notifies asked trustees", async () => {
   await setup();
   await hours(0, 52 * DAY);
-  await press("ana", "sure");
+  await press("ana", "died");
   const ping = mails.filter((m) => m.to === "me@x.test").at(-1)!;
   const path = /https:\/\/p\.x\.test(\/c\/\S+)/.exec(ping.text)![1]!;
-  const page = await call(path);
-  expect(await page.text()).toContain("<form");
   expect(((await (await adminCall("status")).json()) as any).state.phase).toBe("asking");
-  await call(path, { method: "POST" });
+  expect(await (await call(path)).text()).toContain("Hecho");
   expect(((await (await adminCall("status")).json()) as any).state.phase).toBe("alive");
   expect(tgs.some((t) => t.body.chat_id === chats.ana && t.body.text.includes("Falsa alarma"))).toBe(true);
 });
@@ -219,8 +215,8 @@ test("forged links and strangers are rejected", async () => {
   expect((await call(`/c/${anaLink}`)).status).toBe(404);
   await tgUpdate({ message: { chat: { id: 99 }, text: "/start garbage" } });
   expect(tgs.at(-1)!.body.text).toContain("No te conozco");
-  await press("mama", "sure");
-  await press("ana", "sure");
+  await press("mama", "died");
+  await press("ana", "died");
   expect(((await (await adminCall("status")).json()) as any).state.confirmed).toEqual({});
 });
 
