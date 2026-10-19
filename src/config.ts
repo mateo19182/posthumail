@@ -27,16 +27,22 @@ export interface Updates {
   archiveUrl?: string;
 }
 
+// Killswitch subscribers (a Resend segment) get messages addressed `to: all`.
+export interface Killswitch {
+  segmentId: string;
+  from: string;
+}
+
 export interface Config {
   owner: Person;
   trustees: Person[];
-  recipients: Person[];
   quorum: number;
   from: string;
   domain: string;
   cron: string;
   timing: Timing;
   updates?: Updates;
+  killswitch?: Killswitch;
 }
 
 export type Durations = { [K in keyof Timing]: number };
@@ -52,7 +58,14 @@ export const parseDuration = (s: string): number => {
 export const durations = (t: Timing): Durations =>
   Object.fromEntries(Object.entries(t).map(([k, v]) => [k, parseDuration(v)])) as Durations;
 
-export const people = (c: Config): Person[] => [c.owner, ...c.trustees, ...c.recipients];
+export const people = (c: Config): Person[] => [c.owner, ...c.trustees];
+
+// A message goes to `all` (the killswitch segment), a trustee id, or an email address.
+export const ALL = "all";
+const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+export const badRecipients = (c: Config, to: string[]) =>
+  to.filter((r) => !(r === ALL ? c.killswitch : c.trustees.some((t) => t.id === r) || EMAIL.test(r)));
 
 export const validate = (c: Config): Config => {
   durations(c.timing);

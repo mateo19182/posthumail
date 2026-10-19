@@ -1,6 +1,6 @@
 import type { D1Database, R2Bucket, SendEmail } from "@cloudflare/workers-types";
-import { type Config, type Person, durations, parseDuration, people, validate } from "./config.ts";
-import { type Purpose, type Sealed, open, sign, verify } from "./crypto.ts";
+import { ALL, type Config, type Person, badRecipients, durations, parseDuration, people, validate } from "./config.ts";
+import { type Purpose, type Sealed, open, sha256, sign, verify } from "./crypto.ts";
 import * as M from "./machine.ts";
 import * as T from "./texts.ts";
 
@@ -292,6 +292,25 @@ const perform = async (env: Env, c: Config, step: M.Step) => {
 
 // ---------- release ----------
 
+// One Resend broadcast per `to: all` message, to the killswitch segment. The
+// broadcast name makes retries reuse the draft instead of sending twice.
+const broadcast = async (env: Env, c: Config, name: string, subject: string, text: string) => {
+  const api = async (path: string, body?: unknown) => {
+    const res = await fetch(`https://api.resend.com${path}`, {
+      method: body === undefined ? "GET" : "POST",
+      headers: { authorization: `Bearer ${env.resendKey}`, "content-type": "application/json" },
+      ...(body !== undefined && { body: JSON.stringify(body) }),
+    });
+    if (!res.ok) throw new Error(`resend ${path}: ${res.status} ${await res.text()}`);
+    return (await res.json()) as any;
+  };
+  const k = c.killswitch!;
+  const existing = ((await api("/broadcasts?limit=100")).data as any[]).find((b) => b.name === name);
+  if (existing && existing.status !== "draft") return;
+  const draft = existing ?? (await api("/broadcasts", { name, segment_id: k.segmentId, from: k.from, subject, text }));
+  await api(`/broadcasts/${draft.id}/send`, {});
+};
+
 const deliver = async (env: Env, c: Config) => {
   const { results: messages } = await env.db
     .prepare("SELECT id, recipients, iv, ct FROM messages")
@@ -299,29 +318,30 @@ const deliver = async (env: Env, c: Config) => {
   let pending = 0;
   for (const m of messages) {
     const body = JSON.parse(await open(env.messageKey, m)) as MessageBody;
-    for (const pid of JSON.parse(m.recipients) as string[]) {
-      const person = people(c).find((p) => p.id === pid);
-      if (!person) continue;
+    for (const to of JSON.parse(m.recipients) as string[]) {
+      const trustee = c.trustees.find((t) => t.id === to);
+      // File links are per recipient; a broadcast shares one set.
+      const fileSubject = trustee?.id ?? (to === ALL ? ALL : "e" + (await sha256(to)).slice(0, 16));
       const files = await Promise.all(
-        body.attachments.map(async (f) => `- ${f.name}: ${await link(env, c, "f", "file", `${pid}.${f.key}`)}`),
+        body.attachments.map(async (f) => `- ${f.name}: ${await link(env, c, "f", "file", `${fileSubject}.${f.key}`)}`),
       );
-      const text = [body.body.trim(), files.length ? `${T.recipient.attachments}\n${files.join("\n")}` : "", T.recipient.footer(c.owner.name)]
+      const footer = to === ALL ? `${T.recipient.footer(c.owner.name)}\n${UNSUBSCRIBE}` : T.recipient.footer(c.owner.name);
+      const text = [body.body.trim(), files.length ? `${T.recipient.attachments}\n${files.join("\n")}` : "", footer]
         .filter(Boolean)
         .join("\n\n");
-      const chat = await chatOf(env, pid);
-      const channels: [string, () => Promise<unknown>][] = [
-        ["email", () => email(env, c, person, body.subject, text, `release:${m.id}:${pid}`)],
-        ...(chat === null
-          ? []
-          : ([["telegram", () => tgSend(env, chat, `${T.recipient.tgCopy(body.subject)}\n\n${text}`)]] as [
-              string,
-              () => Promise<unknown>,
-            ][])),
-      ];
+      const channels: [string, () => Promise<unknown>][] = [];
+      if (to === ALL) {
+        if (c.killswitch) channels.push(["broadcast", () => broadcast(env, c, `release:${m.id}`, body.subject, text)]);
+      } else {
+        const person: Person = trustee ?? { id: to, name: to, email: to };
+        channels.push(["email", () => email(env, c, person, body.subject, text, `release:${m.id}:${to}`)]);
+        const chat = trustee ? await chatOf(env, trustee.id) : null;
+        if (chat !== null) channels.push(["telegram", () => tgSend(env, chat, `${T.recipient.tgCopy(body.subject)}\n\n${text}`)]);
+      }
       for (const [channel, send] of channels) {
         const row = await env.db
           .prepare("SELECT sent_at, attempts FROM deliveries WHERE message_id = ? AND person_id = ? AND channel = ?")
-          .bind(m.id, pid, channel)
+          .bind(m.id, to, channel)
           .first<{ sent_at: number | null; attempts: number }>();
         if (row?.sent_at || (row?.attempts ?? 0) >= 48) continue;
         let error: string | null = null;
@@ -336,7 +356,7 @@ const deliver = async (env: Env, c: Config) => {
             `INSERT INTO deliveries (message_id, person_id, channel, sent_at, attempts, error) VALUES (?1, ?2, ?3, ?4, 1, ?5)
              ON CONFLICT DO UPDATE SET sent_at = ?4, attempts = attempts + 1, error = ?5`,
           )
-          .bind(m.id, pid, channel, error ? null : Date.now(), error)
+          .bind(m.id, to, channel, error ? null : Date.now(), error)
           .run();
       }
     }
@@ -349,6 +369,8 @@ const deliver = async (env: Env, c: Config) => {
     await kvPut(env, "released_notice", Date.now());
   }
 };
+
+const UNSUBSCRIBE = "{{{RESEND_UNSUBSCRIBE_URL}}}";
 
 export const quarterOf = (ms: number) => {
   const d = new Date(ms);
@@ -564,8 +586,7 @@ const handleAdmin = async (env: Env, req: Request, path: string[]) => {
     const c = validate(body.config);
     const state = await getState(env);
     if (state?.value.phase === "released") return json({ error: "already released" }, 409);
-    const ids = new Set(people(c).map((p) => p.id));
-    const unknown = body.messages.flatMap((m) => m.recipients.filter((r) => !ids.has(r) || r === c.owner.id));
+    const unknown = body.messages.flatMap((m) => badRecipients(c, m.recipients));
     if (unknown.length) return json({ error: `unknown recipients: ${unknown.join(", ")}` }, 400);
     await env.db.batch([
       env.db

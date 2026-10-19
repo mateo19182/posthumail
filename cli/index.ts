@@ -3,7 +3,7 @@ import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, write
 import { basename, dirname, extname, join, resolve } from "node:path";
 import { parse as parseYaml } from "yaml";
 import type { MessageBody, StoredMessage } from "../src/app.ts";
-import { people, type Config } from "../src/config.ts";
+import { badRecipients, people, type Config } from "../src/config.ts";
 import { randomKey, seal, sha256, sign } from "../src/crypto.ts";
 import { loadConfig } from "./load.ts";
 
@@ -86,11 +86,10 @@ const readMessage = (file: string) => {
 const sync = async (c: Config) => {
   const dir = resolve(process.env.POSTHUMAIL_MESSAGES ?? "messages");
   const files = readdirSync(dir).filter((f) => f.endsWith(".md")).sort();
-  const ids = new Set(people(c).map((p) => p.id));
   const messages: StoredMessage[] = [];
   for (const f of files) {
     const msg = readMessage(join(dir, f));
-    const unknown = msg.to.filter((r) => !ids.has(r) || r === c.owner.id);
+    const unknown = badRecipients(c, msg.to);
     if (unknown.length) throw new Error(`${f}: unknown recipients ${unknown.join(", ")}`);
     const attachments = [];
     for (const path of msg.attachments) {
@@ -126,7 +125,7 @@ const sync = async (c: Config) => {
 const invites = async (c: Config) => {
   const bot = await telegram("getMe");
   for (const p of people(c)) {
-    const role = p.id === c.owner.id ? "owner" : c.trustees.includes(p) ? "trustee" : "recipient";
+    const role = p.id === c.owner.id ? "owner" : "trustee";
     console.log(`${p.name} (${role}): https://t.me/${bot.username}?start=${await sign(need("LINK_SECRET"), "link", p.id)}`);
   }
 };
@@ -165,8 +164,7 @@ const status = async (c: Config) => {
   const linked = new Set(s.chats.map((x: any) => x.person_id));
   const verified = await cloudflareVerified();
   for (const p of people(c)) {
-    const fallback = p.id === c.owner.id || c.trustees.includes(p);
-    const mail = fallback ? `${verified.has(p.email) ? "✓" : "·"} cloudflare email` : "";
+    const mail = `${verified.has(p.email) ? "✓" : "·"} cloudflare email`;
     console.log(`  ${p.id.padEnd(12)} ${linked.has(p.id) ? "✓" : "·"} telegram  ${mail}`);
   }
   if (s.deliveries.length) console.table(s.deliveries);

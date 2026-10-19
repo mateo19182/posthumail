@@ -62,7 +62,7 @@ const config: Config = {
     { id: "luis", name: "Luis", email: "luis@x.test" },
     { id: "eva", name: "Eva", email: "eva@x.test" },
   ],
-  recipients: [{ id: "mama", name: "Mamá", email: "mama@x.test" }],
+  killswitch: { segmentId: "ks", from: "k@x.test" },
   quorum: 2,
   from: "posthumail@x.test",
   domain: "p.x.test",
@@ -85,6 +85,7 @@ let tgs: { method: string; body: any }[];
 let cfMails: string[];
 let resendDown = false;
 let emailEvent = "delivered";
+let broadcasts: { name: string; text: string; status: string }[];
 const chats: Record<string, number> = { me: 1, ana: 2, luis: 3, eva: 4 };
 const realFetch = globalThis.fetch;
 
@@ -96,6 +97,7 @@ beforeEach(() => {
   cfMails = [];
   resendDown = false;
   emailEvent = "delivered";
+  broadcasts = [];
   env = {
     db: fakeD1(sql) as any,
     files: fakeR2() as any,
@@ -109,6 +111,17 @@ beforeEach(() => {
   };
   globalThis.fetch = (async (url: string, init: RequestInit = {}) => {
     if (String(url).startsWith("https://api.resend.com/emails/")) return Response.json({ last_event: emailEvent });
+    if (String(url).startsWith("https://api.resend.com/broadcasts")) {
+      if (resendDown) return new Response("down", { status: 500 });
+      const send = /broadcasts\/b(\d+)\/send$/.exec(String(url));
+      if (send) broadcasts[Number(send[1])]!.status = "sent";
+      else if (init.method === "POST") {
+        const b = JSON.parse(String(init.body));
+        broadcasts.push({ name: b.name, text: b.text, status: "draft" });
+        return Response.json({ id: `b${broadcasts.length - 1}` });
+      }
+      return Response.json({ data: broadcasts.map((b, i) => ({ ...b, id: `b${i}` })) });
+    }
     const body = JSON.parse(String(init.body));
     if (String(url).startsWith("https://api.resend.com")) {
       if (resendDown) return new Response("down", { status: 500 });
@@ -137,7 +150,7 @@ const setup = async () => {
     headers: { "content-type": "audio/mpeg", "x-file-name": "set.mp3" },
   });
   const body = JSON.stringify({ subject: "Para ti", body: "Te quiero.", attachments: [{ key: "k1", name: "set.mp3" }] });
-  const messages = [{ id: "m1", recipients: ["mama", "ana"], ...(await seal(env.messageKey, body)) }];
+  const messages = [{ id: "m1", recipients: ["mama@x.test", "ana", "all"], ...(await seal(env.messageKey, body)) }];
   const r = await adminCall("sync", { method: "POST", body: JSON.stringify({ config, messages }) });
   expect(r.status).toBe(200);
   for (const [id, chat] of Object.entries(chats)) await tgUpdate({ message: { chat: { id: chat }, text: `/start ${await sign(env.linkSecret, "link", id)}` } });
@@ -192,10 +205,17 @@ test("full flow: ping, grace, staggered trustees, quorum, cooling, release", asy
   expect(mails.filter((m) => m.to === "ana@x.test" && m.subject === "Para ti").length).toBe(1);
   expect(tgs.some((t) => t.body.chat_id === chats.ana && t.body.text.includes("Te quiero."))).toBe(true);
 
+  // `to: all` is one broadcast to the killswitch segment, with an unsubscribe link and a shared file link.
+  expect(broadcasts.map((b) => [b.name, b.status])).toEqual([["release:m1", "sent"]]);
+  expect(broadcasts[0]!.text).toContain("{{{RESEND_UNSUBSCRIBE_URL}}}");
+  const shared = /https:\/\/p\.x\.test(\/f\/\S+)/.exec(broadcasts[0]!.text)![1]!;
+  expect(await (await call(shared)).text()).toBe("audio-bytes");
+
   // Idempotent: more ticks send nothing new.
   const before = mails.length;
   await hours(56 * DAY, 57 * DAY);
   expect(mails.length).toBe(before);
+  expect(broadcasts.length).toBe(1);
 });
 
 test("owner check-in via email link cancels and notifies asked trustees", async () => {
@@ -252,7 +272,7 @@ test("falls back to Cloudflare for owner and trustees only, retries recipients",
   await press("luis", "died");
   await hours(52 * DAY, 52 * DAY + 49 * 3_600_000);
   const status = (await (await adminCall("status")).json()) as any;
-  const mama = status.deliveries.find((d: any) => d.person_id === "mama");
+  const mama = status.deliveries.find((d: any) => d.person_id === "mama@x.test");
   expect(mama.sent_at).toBeNull();
   expect(mama.error).toContain("resend");
   resendDown = false;
@@ -297,6 +317,6 @@ test("bounced pings to an owner without Telegram never escalate", async () => {
 
 test("trustee linking notifies the owner on Telegram", async () => {
   await setup();
-  await tgUpdate({ message: { chat: { id: 7 }, text: `/start ${await sign(env.linkSecret, "link", "mama")}` } });
-  expect(tgs.some((t) => t.body.chat_id === chats.me && t.body.text.includes("Mamá ha vinculado"))).toBe(true);
+  await tgUpdate({ message: { chat: { id: 7 }, text: `/start ${await sign(env.linkSecret, "link", "luis")}` } });
+  expect(tgs.some((t) => t.body.chat_id === chats.me && t.body.text.includes("Luis ha vinculado"))).toBe(true);
 });
