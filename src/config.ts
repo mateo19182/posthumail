@@ -18,6 +18,13 @@ export interface Timing {
   maxPause: string;
 }
 
+// Quarterly updates go out as Resend broadcasts to a blog newsletter segment.
+export interface Updates {
+  segmentId: string;
+  from: string;
+  remind: boolean;
+}
+
 export interface Config {
   owner: Person;
   trustees: Person[];
@@ -27,6 +34,7 @@ export interface Config {
   domain: string;
   cron: string;
   timing: Timing;
+  updates?: Updates;
 }
 
 export type Durations = { [K in keyof Timing]: number };

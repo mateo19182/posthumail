@@ -82,6 +82,8 @@ const config: Config = {
 let env: Env;
 let mails: { to: string; subject: string; text: string }[];
 let tgs: { method: string; body: any }[];
+let cfMails: string[];
+let resendDown = false;
 const chats: Record<string, number> = { me: 1, ana: 2, luis: 3, eva: 4 };
 const realFetch = globalThis.fetch;
 
@@ -90,18 +92,25 @@ beforeEach(() => {
   sql.exec(readFileSync(new URL("../migrations/0001_init.sql", import.meta.url), "utf8"));
   mails = [];
   tgs = [];
+  cfMails = [];
+  resendDown = false;
   env = {
     db: fakeD1(sql) as any,
     files: fakeR2() as any,
-    mail: { send: async (m: any) => void mails.push({ to: m.to, subject: m.subject, text: m.text }) } as any,
+    mail: { send: async (m: any) => void cfMails.push(m.to) } as any,
     telegramToken: "t",
     telegramSecret: "tgsecret",
     linkSecret: randomKey(),
     messageKey: randomKey(),
     adminToken: "admin",
+    resendKey: "rk",
   };
   globalThis.fetch = (async (url: string, init: RequestInit) => {
-    tgs.push({ method: String(url).split("/").pop()!, body: JSON.parse(String(init.body)) });
+    const body = JSON.parse(String(init.body));
+    if (String(url).startsWith("https://api.resend.com")) {
+      if (resendDown) return new Response("down", { status: 500 });
+      mails.push({ to: body.to[0], subject: body.subject, text: body.text });
+    } else tgs.push({ method: String(url).split("/").pop()!, body });
     return new Response("{}");
   }) as any;
   setSystemTime(new Date(T0));
@@ -226,4 +235,38 @@ test("pause via telegram", async () => {
   expect(tgs.at(-1)!.body.text).toContain("Pausado");
   await hours(0, 59 * DAY);
   expect(mails.length).toBe(0);
+});
+
+test("falls back to Cloudflare for owner and trustees only, retries recipients", async () => {
+  await setup();
+  resendDown = true;
+  await hours(0, 30 * DAY);
+  expect(cfMails).toEqual(["me@x.test"]);
+  await hours(30 * DAY + 3_600_000, 52 * DAY);
+  await press("ana", "died");
+  await press("luis", "died");
+  await hours(52 * DAY, 52 * DAY + 49 * 3_600_000);
+  const status = (await (await adminCall("status")).json()) as any;
+  const mama = status.deliveries.find((d: any) => d.person_id === "mama");
+  expect(mama.sent_at).toBeNull();
+  expect(mama.error).toContain("resend");
+  resendDown = false;
+  await hours(52 * DAY + 50 * 3_600_000, 52 * DAY + 50 * 3_600_000);
+  expect(mails.filter((m) => m.to === "mama@x.test").length).toBe(1);
+  expect(cfMails).toContain("ana@x.test");
+});
+
+test("quarterly update reminder: once at quarter start, again after 2 weeks, stops when sent", async () => {
+  const withUpdates = { ...config, updates: { segmentId: "seg", from: "m@x.test", remind: true } };
+  await adminCall("sync", { method: "POST", body: JSON.stringify({ config: withUpdates, messages: [] }) });
+  const reminders = () => mails.filter((m) => m.subject.includes("actualización")).length;
+  await hours(0, 13 * DAY);
+  expect(reminders()).toBe(1);
+  await hours(14 * DAY, 40 * DAY);
+  expect(reminders()).toBe(2);
+  await hours(91 * DAY, 91 * DAY);
+  expect(reminders()).toBe(3);
+  await adminCall("update-sent", { method: "POST", body: JSON.stringify({ quarter: "2030-q2" }) });
+  await hours(106 * DAY, 106 * DAY);
+  expect(reminders()).toBe(3);
 });

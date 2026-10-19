@@ -13,6 +13,7 @@ export interface Env {
   linkSecret: string;
   messageKey: string;
   adminToken: string;
+  resendKey: string;
 }
 
 export interface Attachment {
@@ -119,8 +120,31 @@ const tgSend = (env: Env, chatId: number, text: string, buttons: Button[] = []) 
     }),
   });
 
-const email = (env: Env, c: Config, to: string, subject: string, text: string) =>
-  env.mail.send({ from: { name: "posthumail", email: c.from }, to, subject, text });
+const resend = async (env: Env, c: Config, to: string, subject: string, text: string, idempotencyKey?: string) => {
+  const res = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${env.resendKey}`,
+      "content-type": "application/json",
+      ...(idempotencyKey && { "idempotency-key": idempotencyKey }),
+    },
+    body: JSON.stringify({ from: `posthumail <${c.from}>`, to: [to], subject, text }),
+  });
+  if (!res.ok) throw new Error(`resend: ${res.status} ${await res.text()}`);
+};
+
+// Resend first; Cloudflare Email Routing as a fallback, which only reaches the
+// owner and trustees because those are the verified destination addresses.
+const email = async (env: Env, c: Config, person: Person, subject: string, text: string, idempotencyKey?: string) => {
+  try {
+    await resend(env, c, person.email, subject, text, idempotencyKey);
+  } catch (e) {
+    const verified = person.id === c.owner.id || c.trustees.some((t) => t.id === person.id);
+    if (!verified) throw e;
+    await log(env, "resend_fallback", { to: person.id, error: String(e) });
+    await env.mail.send({ from: { name: "posthumail", email: c.from }, to: person.email, subject, text });
+  }
+};
 
 // Telegram and email are independent: one failing must not block the other.
 const notify = async (
@@ -132,7 +156,7 @@ const notify = async (
   const chat = await chatOf(env, person.id);
   const results = await Promise.allSettled([
     chat === null ? Promise.resolve() : tgSend(env, chat, msg.text, msg.buttons),
-    email(env, c, person.email, msg.subject, msg.emailText ?? msg.text),
+    email(env, c, person, msg.subject, msg.emailText ?? msg.text),
   ]);
   const errors = results.flatMap((r) => (r.status === "rejected" ? [String(r.reason)] : []));
   if (errors.length) await log(env, "notify_error", { to: person.id, errors });
@@ -221,7 +245,7 @@ const deliver = async (env: Env, c: Config) => {
         .join("\n\n");
       const chat = await chatOf(env, pid);
       const channels: [string, () => Promise<unknown>][] = [
-        ["email", () => email(env, c, person.email, body.subject, text)],
+        ["email", () => email(env, c, person, body.subject, text, `release:${m.id}:${pid}`)],
         ...(chat === null
           ? []
           : ([["telegram", () => tgSend(env, chat, `${T.recipient.tgCopy(body.subject)}\n\n${text}`)]] as [
@@ -261,11 +285,36 @@ const deliver = async (env: Env, c: Config) => {
   }
 };
 
+export const quarterOf = (ms: number) => {
+  const d = new Date(ms);
+  return `${d.getUTCFullYear()}-q${Math.floor(d.getUTCMonth() / 3) + 1}`;
+};
+
+interface UpdateReminder {
+  quarter: string;
+  count: number;
+  at: number;
+  done: boolean;
+}
+
+// One reminder when a quarter starts, a second two weeks later unless `update send` marked it done.
+const remindUpdate = async (env: Env, c: Config, now: number) => {
+  if (!c.updates?.remind) return;
+  const quarter = quarterOf(now);
+  const r = (await kvGet<UpdateReminder>(env, "update_reminder"))?.value;
+  const same = r?.quarter === quarter;
+  if (same && (r.done || r.count >= 2 || now - r.at < 14 * 86_400_000)) return;
+  const text = T.owner.updateReminder(quarter);
+  await notify(env, c, c.owner, { text, subject: `posthumail: actualización ${quarter}` });
+  await kvPut(env, "update_reminder", { quarter, count: same ? r.count + 1 : 1, at: now, done: false });
+};
+
 export const tick = async (env: Env, now = Date.now()) => {
   const c = await getConfig(env);
   if (!c) return;
   const step = await mutate(env, c, (s) => M.tick(s, now, ctxOf(c)));
   if (step?.state.phase === "released") await deliver(env, c);
+  else if (step) await remindUpdate(env, c, now);
 };
 
 // ---------- HTTP ----------
@@ -463,6 +512,13 @@ const handleAdmin = async (env: Env, req: Request, path: string[]) => {
       });
       return json({ ok: true });
     }
+  }
+
+  if (route === "update-sent" && req.method === "POST") {
+    const { quarter } = (await req.json()) as { quarter: string };
+    const r = (await kvGet<UpdateReminder>(env, "update_reminder"))?.value;
+    await kvPut(env, "update_reminder", { quarter, count: r?.quarter === quarter ? r.count : 0, at: Date.now(), done: true });
+    return json({ ok: true });
   }
 
   if (route === "tick" && req.method === "POST") {

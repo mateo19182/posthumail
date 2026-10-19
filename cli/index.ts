@@ -158,6 +158,54 @@ const status = async (c: Config) => {
   if (process.argv.includes("--events")) console.table(s.events);
 };
 
+const resendApi = async (path: string, body?: unknown) => {
+  const res = await fetch(`https://api.resend.com${path}`, {
+    method: body === undefined ? "GET" : "POST",
+    headers: { authorization: `Bearer ${need("RESEND_API_KEY")}`, "content-type": "application/json" },
+    ...(body !== undefined && { body: JSON.stringify(body) }),
+  });
+  const data = (await res.json()) as any;
+  if (!res.ok) throw new Error(`resend ${path}: ${res.status} ${data.message ?? ""}`);
+  return data;
+};
+
+const UNSUBSCRIBE = "{{{RESEND_UNSUBSCRIBE_URL}}}";
+
+// Quarterly update: plain-text Resend broadcast to the configured segment.
+// `--test` sends it only to the owner. Re-running reuses the draft and never sends twice.
+const update = async (c: Config, [sub, name]: string[]) => {
+  if (sub !== "send" || !name) throw new Error("usage: posthumail update send <name> [--test]");
+  if (!c.updates) throw new Error("config has no `updates` section");
+  const file = join(resolve(process.env.POSTHUMAIL_UPDATES ?? "updates"), `${name}.md`);
+  const m = /^---\n([\s\S]*?)\n---\n?([\s\S]*)$/.exec(readFileSync(file, "utf8"));
+  if (!m) throw new Error(`${file}: missing frontmatter`);
+  const { subject } = parseYaml(m[1]!) as { subject?: string };
+  if (!subject) throw new Error(`${file}: frontmatter needs 'subject'`);
+  const text = `${m[2]!.trim()}\n\n--\nUnsubscribe / Darse de baja: ${UNSUBSCRIBE}`;
+  const from = c.updates.from;
+
+  if (process.argv.includes("--test")) {
+    await resendApi("/emails", { from, to: [c.owner.email], subject: `[test] ${subject}`, text: text.replace(UNSUBSCRIBE, "(link)") });
+    console.log(`test sent to ${c.owner.email}`);
+    return;
+  }
+
+  const broadcastName = `update:${name}`;
+  const existing = ((await resendApi("/broadcasts?limit=100")).data as any[]).find(
+    (b) => b.name === broadcastName && b.segment_id === c.updates!.segmentId,
+  );
+  if (existing && existing.status !== "draft") throw new Error(`${broadcastName} already ${existing.status}`);
+  const contacts = (await resendApi(`/contacts?segment_id=${c.updates.segmentId}&limit=100`)).data as any[];
+  const n = contacts.filter((x) => !x.unsubscribed).length;
+  console.log(`From: ${from}\nSubject: ${subject}\n\n${text}\n`);
+  if (prompt(`Send to ${n} subscribed contacts? [y/N]`)?.trim().toLowerCase() !== "y") return console.log("cancelled");
+  const draft =
+    existing ?? (await resendApi("/broadcasts", { name: broadcastName, segment_id: c.updates.segmentId, from, reply_to: c.owner.email, subject, text }));
+  await resendApi(`/broadcasts/${draft.id}/send`, {});
+  console.log(`sent ${broadcastName}`);
+  if (/^\d{4}-q[1-4]$/.test(name)) await admin(c, "update-sent", { method: "POST", body: JSON.stringify({ quarter: name }) });
+};
+
 const [cmd, ...args] = process.argv.slice(2);
 if (cmd === "init") init();
 else {
@@ -168,11 +216,12 @@ else {
     invites: () => invites(c),
     webhook: () => webhook(c),
     status: () => status(c),
+    update: () => update(c, args),
     tick: async () => console.log(await (await admin(c, "tick", { method: "POST" })).json()),
   };
   const run = commands[cmd ?? ""];
   if (!run) {
-    console.log("usage: posthumail <init|deploy|sync|invites|webhook|status|tick>");
+    console.log("usage: posthumail <init|deploy|sync|invites|webhook|status|update|tick>");
     process.exit(1);
   }
   await run();

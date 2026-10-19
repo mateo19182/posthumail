@@ -29,6 +29,7 @@ export default class Posthumail extends Cloudflare.Worker<Posthumail>()(
       linkSecret: yield* Config.Redacted("LINK_SECRET"),
       messageKey: yield* Config.Redacted("MESSAGE_KEY"),
       adminToken: yield* Config.Redacted("ADMIN_TOKEN"),
+      resendKey: yield* Config.Redacted("RESEND_API_KEY"),
     };
     const cron = yield* Config.String("POSTHUMAIL_CRON").pipe(Config.withDefault("0 * * * *"));
 

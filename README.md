@@ -20,7 +20,7 @@ Any owner check-in (button, email link, `/alive`), or any trustee answering "fin
 - `alchemy.run.ts` / `src/worker.ts`: Alchemy v2 (Effect). One Worker with an hourly cron, D1 (state, chats, encrypted messages, delivery log), R2 (attachments), a `send_email` binding, and one `Email.Address` per person.
 - `src/machine.ts`: the pure state machine. All the timing rules live here, tested in `test/machine.test.ts`.
 - `src/app.ts`: HTTP routes, Telegram webhook, notifications, delivery. `test/app.test.ts` runs the full flow against fake D1, R2, mail and Telegram.
-- Email uses Cloudflare Email Routing sending, which is free only to **verified** addresses. Deploying creates an Address for every person, and Cloudflare emails each of them a verification link they must click.
+- Email goes through Resend (`RESEND_API_KEY`, sender on m19182.dev). If Resend fails, mail to the owner and trustees falls back to Cloudflare Email Routing. That only reaches verified addresses, so deploying creates an Address for each of them, and Cloudflare sends each one a one-time verification email. Other recipients rely on Resend, with hourly retries.
 
 ## Setup
 
@@ -53,9 +53,21 @@ Text, sent as-is.
 
 `bun cli sync` encrypts each message locally with `MESSAGE_KEY` (AES-GCM). Only the Worker holds that key, as a secret. Attachments are stored unencrypted in a private R2 bucket and served only through signed per-recipient links. Every sync replaces all messages. Sync is refused once released.
 
+## Quarterly updates
+
+These go to the blog newsletter's "Quarterly updates" segment in Resend (`updates` in the config). The Worker reminds the owner when a quarter starts, and again two weeks later if nothing was sent.
+
+```sh
+$EDITOR updates/2026-q4.md                 # frontmatter: subject. Plain text body.
+bun cli update send 2026-q4 --test         # only to the owner
+bun cli update send 2026-q4                # preview, confirm, broadcast; marks the quarter done
+```
+
+Re-running reuses the Resend draft, so a sent update is never sent twice. The death-notice list is separate and manual: add the people you want to the config and address messages to them.
+
 ## Secrets
 
-`.env` holds `TELEGRAM_TOKEN`, `LINK_SECRET` (signs links), `MESSAGE_KEY`, `ADMIN_TOKEN` (CLI → `/admin/*`) and `TELEGRAM_WEBHOOK_SECRET`. Keep an offline backup. Rotating `LINK_SECRET` invalidates every Telegram invite and email link.
+`.env` holds `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `RESEND_API_KEY`, `TELEGRAM_TOKEN`, `LINK_SECRET` (signs links), `MESSAGE_KEY`, `ADMIN_TOKEN` (CLI → `/admin/*`) and `TELEGRAM_WEBHOOK_SECRET`. Keep an offline backup. Rotating `LINK_SECRET` invalidates every Telegram invite and email link.
 
 ## Test stage
 

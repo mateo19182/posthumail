@@ -3,7 +3,6 @@ import * as Cloudflare from "alchemy/Cloudflare";
 import * as State from "alchemy/State";
 import * as Effect from "effect/Effect";
 import { loadConfig } from "./cli/load.ts";
-import { people } from "./src/config.ts";
 import { Db, Files } from "./src/resources.ts";
 import Worker from "./src/worker.ts";
 
@@ -16,8 +15,9 @@ export default Alchemy.Stack(
   Effect.gen(function* () {
     yield* Db;
     yield* Files;
-    // Creating an Address makes Cloudflare send that person a one-time verification email.
-    for (const p of people(config).filter((p) => p.manageAddress !== false)) {
+    // Fallback route for owner and trustees only. Creating an Address makes
+    // Cloudflare send that person a one-time verification email.
+    for (const p of [config.owner, ...config.trustees].filter((p) => p.manageAddress !== false)) {
       yield* Cloudflare.Email.Address(`Address-${p.id}`, { email: p.email });
     }
     const worker = yield* Worker;

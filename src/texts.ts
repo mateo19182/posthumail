@@ -18,6 +18,8 @@ export const owner = {
   trusteeConfirmed: (name: string, count: number, quorum: number) =>
     `${name} ha confirmado tu fallecimiento (${count}/${quorum}). Si sigues aquí, confírmalo.`,
   falseAlarmBy: (name: string) => `${name} ha dicho que estás bien. Contador reiniciado.`,
+  updateReminder: (q: string) =>
+    `Toca la actualización trimestral (${q}). Escríbela en updates/${q}.md y envíala con: bun cli update send ${q}`,
   help: "/alive: confirmar que sigues aquí\n/pause 60d: pausar\n/resume: quitar la pausa\n/status: estado",
 };
 
