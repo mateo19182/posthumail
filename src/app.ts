@@ -297,16 +297,28 @@ interface UpdateReminder {
   done: boolean;
 }
 
-// One reminder when a quarter starts, a second two weeks later unless `update send` marked it done.
+// Updates go out on the solstice or equinox closing each quarter: a reminder a
+// week before, a second on the day unless `update send` marked it done.
+const SEND_DAYS: [month: number, day: number][] = [[2, 20], [5, 21], [8, 22], [11, 21]];
+
+export const updateSendAt = (ms: number) => {
+  const d = new Date(ms);
+  const [month, day] = SEND_DAYS[Math.floor(d.getUTCMonth() / 3)]!;
+  return Date.UTC(d.getUTCFullYear(), month, day, 9);
+};
+
 const remindUpdate = async (env: Env, c: Config, now: number) => {
   if (!c.updates?.remind) return;
   const quarter = quarterOf(now);
+  const sendAt = updateSendAt(now);
   const r = (await kvGet<UpdateReminder>(env, "update_reminder"))?.value;
-  const same = r?.quarter === quarter;
-  if (same && (r.done || r.count >= 2 || now - r.at < 14 * 86_400_000)) return;
+  const count = r?.quarter === quarter ? r.count : 0;
+  if (r?.quarter === quarter && r.done) return;
+  const due = count === 0 ? now >= sendAt - 7 * 86_400_000 : count === 1 && now >= sendAt;
+  if (!due) return;
   const text = T.owner.updateReminder(quarter);
   await notify(env, c, c.owner, { text, subject: `posthumail: actualización ${quarter}` });
-  await kvPut(env, "update_reminder", { quarter, count: same ? r.count + 1 : 1, at: now, done: false });
+  await kvPut(env, "update_reminder", { quarter, count: count + 1, at: now, done: false });
 };
 
 export const tick = async (env: Env, now = Date.now()) => {
