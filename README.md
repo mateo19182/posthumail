@@ -42,7 +42,7 @@ Plain text.
 
 `sync` encrypts each message locally. Only the Worker can decrypt it.
 
-Quarterly updates go out on the solstices and equinoxes, with a reminder a week before. The blog repo owns them; posthumail only sends the email, read from the blog's gitignored `private/updates/<quarter>.md` (`subject:` frontmatter, plain-text body):
+Life updates are owned by the blog repo. posthumail only sends the email to the updates segment, read from the blog's gitignored `private/updates/<name>.md` (`subject:` frontmatter, plain-text body). With `updates.remind`, the Worker also reminds you a week before each solstice/equinox:
 
 ```sh
 bun cli update send 2026-q4 --test   # then without --test
