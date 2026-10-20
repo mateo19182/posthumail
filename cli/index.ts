@@ -194,10 +194,11 @@ const update = async (c: Config, [sub, name]: string[]) => {
   const file = join(blog, "content/updates", `${name}.md`);
   const m = /^---\n([\s\S]*?)\n---\n?([\s\S]*)$/.exec(readFileSync(file, "utf8"));
   if (!m) throw new Error(`${file}: missing frontmatter`);
-  const { title: subject } = parseYaml(m[1]!) as { title?: string };
-  if (!subject) throw new Error(`${file}: frontmatter needs 'title'`);
+  const { title } = parseYaml(m[1]!) as { title?: string };
+  if (!title) throw new Error(`${file}: frontmatter needs 'title'`);
+  const subject = `${c.owner.name} life update - ${title}`;
   const archive = c.updates.archiveUrl ? `Anteriores: ${c.updates.archiveUrl}\n` : "";
-  const text = `${m[2]!.trim()}\n\n--\n${archive}Darse de baja: ${UNSUBSCRIBE}`;
+  const text = `${c.owner.name} · ${title}\n---\n\n${m[2]!.trim()}\n\n--\n${archive}Darse de baja: ${UNSUBSCRIBE}`;
   const from = c.updates.from;
 
   if (process.argv.includes("--test")) {
