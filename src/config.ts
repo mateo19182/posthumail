@@ -18,18 +18,18 @@ export interface Timing {
   maxPause: string;
 }
 
-// Life updates from the blog go out as Resend broadcasts to its newsletter segment.
-export interface Updates {
+// A Resend broadcast list: the blog's subscribers segment, narrowed to one topic,
+// so its unsubscribe link only drops that list.
+export interface List {
   segmentId: string;
+  topicId: string;
   from: string;
-  // Where earlier updates can be read; linked at the end of each email.
-  archiveUrl?: string;
 }
 
-// Killswitch subscribers (a Resend segment) get messages addressed `to: all`.
-export interface Killswitch {
-  segmentId: string;
-  from: string;
+// Life updates from the blog.
+export interface Updates extends List {
+  // Where earlier updates can be read; linked at the end of each email.
+  archiveUrl?: string;
 }
 
 export interface Config {
@@ -41,7 +41,8 @@ export interface Config {
   cron: string;
   timing: Timing;
   updates?: Updates;
-  killswitch?: Killswitch;
+  // Gets messages addressed `to: all`.
+  killswitch?: List;
 }
 
 export type Durations = { [K in keyof Timing]: number };
@@ -59,7 +60,7 @@ export const durations = (t: Timing): Durations =>
 
 export const people = (c: Config): Person[] => [c.owner, ...c.trustees];
 
-// A message goes to `all` (the killswitch segment), a trustee id, or an email address.
+// A message goes to `all` (the killswitch list), a trustee id, or an email address.
 export const ALL = "all";
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 

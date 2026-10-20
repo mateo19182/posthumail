@@ -1,6 +1,6 @@
 # posthumail
 
-A self-hosted dead man's switch on Cloudflare's free plan. Monthly check-ins by email and Telegram. If you stop answering, trusted people are asked. Once enough confirm, your messages are sent. It also emails the life updates from my blog to a newsletter segment.
+A self-hosted dead man's switch on Cloudflare's free plan. Monthly check-ins by email and Telegram. If you stop answering, trusted people are asked. Once enough confirm, your messages are sent. It also emails the life updates from my blog to a newsletter list.
 
 ## Flow
 
@@ -23,7 +23,7 @@ Nothing is sent without trustee confirmation. Undelivered warnings don't count:
 
 ```sh
 bun install && bun cli init                            # secrets into .env
-cp posthumail.config.example.ts posthumail.config.ts   # people, timing, domain, segments
+cp posthumail.config.example.ts posthumail.config.ts   # people, timing, domain, Resend lists
 bun cli deploy --stage prod                            # needs Cloudflare + Resend keys in .env, and Node 22
 bun cli webhook && bun cli sync && bun cli invites     # Telegram links are optional
 bun cli status
@@ -33,7 +33,7 @@ Messages are Markdown files in `messages/`:
 
 ```md
 ---
-to: [all, ana, someone@example.com]   # all = killswitch segment, trustee id, or email
+to: [all, ana, someone@example.com]   # all = killswitch list, trustee id, or email
 subject: Para ti
 attachments: [./files/last-set.mp3]
 ---
@@ -42,7 +42,7 @@ Plain text.
 
 `sync` encrypts each message locally. Only the Worker can decrypt it.
 
-Life updates are written and published in the blog. posthumail only emails one to the updates segment, from the blog's `content/updates/<yyyy-mm>.md` (`title` is the subject):
+Life updates are written and published in the blog. posthumail only emails one to the life-updates topic of the subscribers segment, from the blog's `content/updates/<yyyy-mm>.md` (`title` is the subject):
 
 ```sh
 bun cli update send 2026-10 --test   # then without --test

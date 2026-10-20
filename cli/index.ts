@@ -183,6 +183,7 @@ const resendApi = async (path: string, body?: unknown) => {
 };
 
 const UNSUBSCRIBE = "{{{RESEND_UNSUBSCRIBE_URL}}}";
+const HEADER = "---";
 
 // Life update: plain-text Resend broadcast of the blog's content/updates/<name>.md
 // (Spanish original) to the configured segment.
@@ -196,9 +197,9 @@ const update = async (c: Config, [sub, name]: string[]) => {
   if (!m) throw new Error(`${file}: missing frontmatter`);
   const { title } = parseYaml(m[1]!) as { title?: string };
   if (!title) throw new Error(`${file}: frontmatter needs 'title'`);
-  const subject = `${c.owner.name} life update - ${title}`;
+  const subject = `Life update - ${title}`;
   const archive = c.updates.archiveUrl ? `Anteriores: ${c.updates.archiveUrl}\n` : "";
-  const text = `${c.owner.name} · ${title}\n---\n\n${m[2]!.trim()}\n\n--\n${archive}Darse de baja: ${UNSUBSCRIBE}`;
+  const text = `${HEADER}\n\n${m[2]!.trim()}\n\n--\n${archive}Darse de baja: ${UNSUBSCRIBE}`;
   const from = c.updates.from;
 
   if (process.argv.includes("--test")) {
@@ -212,12 +213,17 @@ const update = async (c: Config, [sub, name]: string[]) => {
     (b) => b.name === broadcastName && b.segment_id === c.updates!.segmentId,
   );
   if (existing && existing.status !== "draft") throw new Error(`${broadcastName} already ${existing.status}`);
-  const contacts = (await resendApi(`/contacts?segment_id=${c.updates.segmentId}&limit=100`)).data as any[];
-  const n = contacts.filter((x) => !x.unsubscribed).length;
+  const contacts = ((await resendApi(`/contacts?segment_id=${c.updates.segmentId}&limit=100`)).data as any[]).filter((x) => !x.unsubscribed);
+  let n = 0;
+  for (const x of contacts) {
+    await Bun.sleep(600); // Resend allows two requests per second
+    const topics = (await resendApi(`/contacts/${x.id}/topics`)).data as any[];
+    if (topics.some((t) => t.id === c.updates!.topicId && t.subscription === "opt_in")) n++;
+  }
   console.log(`From: ${from}\nSubject: ${subject}\n\n${text}\n`);
   if (prompt(`Send to ${n} subscribed contacts? [y/N]`)?.trim().toLowerCase() !== "y") return console.log("cancelled");
   const draft =
-    existing ?? (await resendApi("/broadcasts", { name: broadcastName, segment_id: c.updates.segmentId, from, reply_to: c.owner.email, subject, text }));
+    existing ?? (await resendApi("/broadcasts", { name: broadcastName, segment_id: c.updates.segmentId, topic_id: c.updates.topicId, from, reply_to: c.owner.email, subject, text }));
   await resendApi(`/broadcasts/${draft.id}/send`, {});
   console.log(`sent ${broadcastName}`);
 };

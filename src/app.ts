@@ -292,7 +292,7 @@ const perform = async (env: Env, c: Config, step: M.Step) => {
 
 // ---------- release ----------
 
-// One Resend broadcast per `to: all` message, to the killswitch segment. The
+// One Resend broadcast per `to: all` message, to the killswitch list. The
 // broadcast name makes retries reuse the draft instead of sending twice.
 const broadcast = async (env: Env, c: Config, name: string, subject: string, text: string) => {
   const api = async (path: string, body?: unknown) => {
@@ -307,7 +307,7 @@ const broadcast = async (env: Env, c: Config, name: string, subject: string, tex
   const k = c.killswitch!;
   const existing = ((await api("/broadcasts?limit=100")).data as any[]).find((b) => b.name === name);
   if (existing && existing.status !== "draft") return;
-  const draft = existing ?? (await api("/broadcasts", { name, segment_id: k.segmentId, from: k.from, subject, text }));
+  const draft = existing ?? (await api("/broadcasts", { name, segment_id: k.segmentId, topic_id: k.topicId, from: k.from, subject, text }));
   await api(`/broadcasts/${draft.id}/send`, {});
 };
 

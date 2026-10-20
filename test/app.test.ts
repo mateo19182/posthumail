@@ -62,7 +62,7 @@ const config: Config = {
     { id: "luis", name: "Luis", email: "luis@x.test" },
     { id: "eva", name: "Eva", email: "eva@x.test" },
   ],
-  killswitch: { segmentId: "ks", from: "k@x.test" },
+  killswitch: { segmentId: "subs", topicId: "ks", from: "k@x.test" },
   quorum: 2,
   from: "posthumail@x.test",
   domain: "p.x.test",
@@ -85,7 +85,7 @@ let tgs: { method: string; body: any }[];
 let cfMails: string[];
 let resendDown = false;
 let emailEvent = "delivered";
-let broadcasts: { name: string; text: string; status: string }[];
+let broadcasts: { name: string; topic_id: string; text: string; status: string }[];
 const chats: Record<string, number> = { me: 1, ana: 2, luis: 3, eva: 4 };
 const realFetch = globalThis.fetch;
 
@@ -117,7 +117,7 @@ beforeEach(() => {
       if (send) broadcasts[Number(send[1])]!.status = "sent";
       else if (init.method === "POST") {
         const b = JSON.parse(String(init.body));
-        broadcasts.push({ name: b.name, text: b.text, status: "draft" });
+        broadcasts.push({ name: b.name, topic_id: b.topic_id, text: b.text, status: "draft" });
         return Response.json({ id: `b${broadcasts.length - 1}` });
       }
       return Response.json({ data: broadcasts.map((b, i) => ({ ...b, id: `b${i}` })) });
@@ -205,8 +205,9 @@ test("full flow: ping, grace, staggered trustees, quorum, cooling, release", asy
   expect(mails.filter((m) => m.to === "ana@x.test" && m.subject === "Para ti").length).toBe(1);
   expect(tgs.some((t) => t.body.chat_id === chats.ana && t.body.text.includes("Te quiero."))).toBe(true);
 
-  // `to: all` is one broadcast to the killswitch segment, with an unsubscribe link and a shared file link.
+  // `to: all` is one broadcast to the killswitch topic, with an unsubscribe link and a shared file link.
   expect(broadcasts.map((b) => [b.name, b.status])).toEqual([["release:m1", "sent"]]);
+  expect(broadcasts[0]!.topic_id).toBe("ks");
   expect(broadcasts[0]!.text).toContain("{{{RESEND_UNSUBSCRIBE_URL}}}");
   const shared = /https:\/\/p\.x\.test(\/f\/\S+)/.exec(broadcasts[0]!.text)![1]!;
   expect(await (await call(shared)).text()).toBe("audio-bytes");

@@ -22,14 +22,16 @@ export default {
     coolingPingEvery: "6h",
     maxPause: "180d",
   },
-  // Resend segment that gets messages addressed `to: all`.
+  // Blog subscribers segment + topic that gets messages addressed `to: all`.
   killswitch: {
     segmentId: "<resend-segment-id>",
+    topicId: "<resend-topic-id>",
     from: "Me <killswitch@example.com>",
   },
-  // Blog newsletter "Quarterly life updates" segment in Resend.
+  // Blog subscribers segment + "Life updates" topic.
   updates: {
     segmentId: "<resend-segment-id>",
+    topicId: "<resend-topic-id>",
     from: "Me <updates@example.com>",
     archiveUrl: "https://blog.example.com/updates",
   },
