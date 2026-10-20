@@ -281,26 +281,6 @@ test("falls back to Cloudflare for owner and trustees only, retries recipients",
   expect(cfMails).toContain("ana@x.test");
 });
 
-test("quarterly update reminder: a week before the equinox/solstice, again on the day, stops when sent", async () => {
-  const withUpdates = { ...config, updates: { segmentId: "seg", from: "m@x.test", remind: true } };
-  await adminCall("sync", { method: "POST", body: JSON.stringify({ config: withUpdates, messages: [] }) });
-  const reminders = () => mails.filter((m) => m.subject.includes("actualización")).map((m) => m.subject);
-  // T0 is 2030-01-01; the Q1 send day is 2030-03-20.
-  const mar = (day: number) => Date.UTC(2030, 2, day, 9) - T0;
-  await hours(0, mar(13) - 3_600_000);
-  expect(reminders()).toEqual([]);
-  await hours(mar(13), mar(20) - 3_600_000);
-  expect(reminders()).toEqual(["posthumail: actualización 2030-q1"]);
-  await hours(mar(20), mar(31));
-  expect(reminders().length).toBe(2);
-  const jun = (day: number) => Date.UTC(2030, 5, day, 9) - T0;
-  await hours(jun(14), jun(14));
-  expect(reminders().at(-1)).toBe("posthumail: actualización 2030-q2");
-  await adminCall("update-sent", { method: "POST", body: JSON.stringify({ quarter: "2030-q2" }) });
-  await hours(jun(21), jun(21));
-  expect(reminders().length).toBe(3);
-});
-
 test("bounced pings to an owner without Telegram never escalate", async () => {
   await setup();
   await env.db.prepare("DELETE FROM chats WHERE person_id = 'me'").run();

@@ -372,49 +372,12 @@ const deliver = async (env: Env, c: Config) => {
 
 const UNSUBSCRIBE = "{{{RESEND_UNSUBSCRIBE_URL}}}";
 
-export const quarterOf = (ms: number) => {
-  const d = new Date(ms);
-  return `${d.getUTCFullYear()}-q${Math.floor(d.getUTCMonth() / 3) + 1}`;
-};
-
-interface UpdateReminder {
-  quarter: string;
-  count: number;
-  at: number;
-  done: boolean;
-}
-
-// Updates go out on the solstice or equinox closing each quarter: a reminder a
-// week before, a second on the day unless `update send` marked it done.
-const SEND_DAYS: [month: number, day: number][] = [[2, 20], [5, 21], [8, 22], [11, 21]];
-
-export const updateSendAt = (ms: number) => {
-  const d = new Date(ms);
-  const [month, day] = SEND_DAYS[Math.floor(d.getUTCMonth() / 3)]!;
-  return Date.UTC(d.getUTCFullYear(), month, day, 9);
-};
-
-const remindUpdate = async (env: Env, c: Config, now: number) => {
-  if (!c.updates?.remind) return;
-  const quarter = quarterOf(now);
-  const sendAt = updateSendAt(now);
-  const r = (await kvGet<UpdateReminder>(env, "update_reminder"))?.value;
-  const count = r?.quarter === quarter ? r.count : 0;
-  if (r?.quarter === quarter && r.done) return;
-  const due = count === 0 ? now >= sendAt - 7 * 86_400_000 : count === 1 && now >= sendAt;
-  if (!due) return;
-  const text = T.owner.updateReminder(quarter);
-  await notify(env, c, c.owner, { text, subject: `posthumail: actualización ${quarter}` });
-  await kvPut(env, "update_reminder", { quarter, count: count + 1, at: now, done: false });
-};
-
 export const tick = async (env: Env, now = Date.now()) => {
   const c = await getConfig(env);
   if (!c) return;
   await resolvePendingPing(env, now);
   const step = await mutate(env, c, (s) => M.tick(s, now, ctxOf(c)));
   if (step?.state.phase === "released") await deliver(env, c);
-  else if (step) await remindUpdate(env, c, now);
 };
 
 // ---------- HTTP ----------
@@ -613,13 +576,6 @@ const handleAdmin = async (env: Env, req: Request, path: string[]) => {
       });
       return json({ ok: true });
     }
-  }
-
-  if (route === "update-sent" && req.method === "POST") {
-    const { quarter } = (await req.json()) as { quarter: string };
-    const r = (await kvGet<UpdateReminder>(env, "update_reminder"))?.value;
-    await kvPut(env, "update_reminder", { quarter, count: r?.quarter === quarter ? r.count : 0, at: Date.now(), done: true });
-    return json({ ok: true });
   }
 
   if (route === "tick" && req.method === "POST") {

@@ -19,8 +19,6 @@ export const owner = {
     `${name} ha confirmado tu fallecimiento (${count}/${quorum}). Si sigues aquí, confírmalo.`,
   falseAlarmBy: (name: string) => `${name} ha dicho que estás bien. Contador reiniciado.`,
   linked: (name: string) => `${name} ha vinculado Telegram.`,
-  updateReminder: (q: string) =>
-    `Actualización trimestral ${q}: escríbela en el blog (private/updates/${q}.md) y envíala con: bun cli update send ${q}`,
   help: "/alive: confirmar que sigues aquí\n/pause 60d: pausar\n/resume: quitar la pausa\n/status: estado",
 };
 

@@ -184,18 +184,18 @@ const resendApi = async (path: string, body?: unknown) => {
 
 const UNSUBSCRIBE = "{{{RESEND_UNSUBSCRIBE_URL}}}";
 
-// Quarterly update: plain-text Resend broadcast to the configured segment. The blog repo
-// owns the updates; the email text is its gitignored private/updates/<name>.md.
+// Life update: plain-text Resend broadcast of the blog's content/updates/<name>.md
+// (Spanish original) to the configured segment.
 // `--test` sends it only to the owner. Re-running reuses the draft and never sends twice.
 const update = async (c: Config, [sub, name]: string[]) => {
   if (sub !== "send" || !name) throw new Error("usage: posthumail update send <name> [--test]");
   if (!c.updates) throw new Error("config has no `updates` section");
   const blog = resolve(process.env.POSTHUMAIL_BLOG ?? join(process.env.HOME!, "projects/blog-19182"));
-  const file = join(blog, "private/updates", `${name}.md`);
+  const file = join(blog, "content/updates", `${name}.md`);
   const m = /^---\n([\s\S]*?)\n---\n?([\s\S]*)$/.exec(readFileSync(file, "utf8"));
   if (!m) throw new Error(`${file}: missing frontmatter`);
-  const { subject } = parseYaml(m[1]!) as { subject?: string };
-  if (!subject) throw new Error(`${file}: frontmatter needs 'subject'`);
+  const { title: subject } = parseYaml(m[1]!) as { title?: string };
+  if (!subject) throw new Error(`${file}: frontmatter needs 'title'`);
   const archive = c.updates.archiveUrl ? `Anteriores: ${c.updates.archiveUrl}\n` : "";
   const text = `${m[2]!.trim()}\n\n--\n${archive}Darse de baja: ${UNSUBSCRIBE}`;
   const from = c.updates.from;
@@ -219,7 +219,6 @@ const update = async (c: Config, [sub, name]: string[]) => {
     existing ?? (await resendApi("/broadcasts", { name: broadcastName, segment_id: c.updates.segmentId, from, reply_to: c.owner.email, subject, text }));
   await resendApi(`/broadcasts/${draft.id}/send`, {});
   console.log(`sent ${broadcastName}`);
-  if (/^\d{4}-q[1-4]$/.test(name)) await admin(c, "update-sent", { method: "POST", body: JSON.stringify({ quarter: name }) });
 };
 
 const [cmd, ...args] = process.argv.slice(2);

@@ -1,6 +1,6 @@
 # posthumail
 
-A self-hosted dead man's switch on Cloudflare's free plan. Monthly check-ins by email and Telegram. If you stop answering, trusted people are asked. Once enough confirm, your messages are sent. It also sends quarterly life updates to a newsletter segment.
+A self-hosted dead man's switch on Cloudflare's free plan. Monthly check-ins by email and Telegram. If you stop answering, trusted people are asked. Once enough confirm, your messages are sent. It also emails the life updates from my blog to a newsletter segment.
 
 ## Flow
 
@@ -42,10 +42,10 @@ Plain text.
 
 `sync` encrypts each message locally. Only the Worker can decrypt it.
 
-Life updates are owned by the blog repo. posthumail only sends the email to the updates segment, read from the blog's gitignored `private/updates/<name>.md` (`subject:` frontmatter, plain-text body). With `updates.remind`, the Worker also reminds you a week before each solstice/equinox:
+Life updates are written and published in the blog. posthumail only emails one to the updates segment, from the blog's `content/updates/<yyyy-mm>.md` (`title` is the subject):
 
 ```sh
-bun cli update send 2026-q4 --test   # then without --test
+bun cli update send 2026-10 --test   # then without --test
 ```
 
 Back up `.env` and `.alchemy/`. Run a test stage end to end once a year.

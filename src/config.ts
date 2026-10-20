@@ -18,11 +18,10 @@ export interface Timing {
   maxPause: string;
 }
 
-// Quarterly updates go out as Resend broadcasts to a blog newsletter segment.
+// Life updates from the blog go out as Resend broadcasts to its newsletter segment.
 export interface Updates {
   segmentId: string;
   from: string;
-  remind: boolean;
   // Where earlier updates can be read; linked at the end of each email.
   archiveUrl?: string;
 }

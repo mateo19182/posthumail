@@ -31,7 +31,6 @@ export default {
   updates: {
     segmentId: "<resend-segment-id>",
     from: "Me <updates@example.com>",
-    remind: true,
-    archiveUrl: "https://blog.example.com/now#quarterly-life-updates",
+    archiveUrl: "https://blog.example.com/updates",
   },
 } satisfies Config;
