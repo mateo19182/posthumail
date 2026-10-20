@@ -217,8 +217,9 @@ const update = async (c: Config, [sub, name]: string[]) => {
   const html = updateHtml(body, c.updates.archiveUrl);
   const from = c.updates.from;
 
+  // A unique test subject starts a new Gmail thread, which would otherwise fold the repeated footer.
   if (process.argv.includes("--test")) {
-    await resendApi("/emails", { from, to: [c.owner.email], subject: `[test] ${subject}`, text: text.replace(UNSUBSCRIBE, "(link)"), html: html.replace(UNSUBSCRIBE, "#") });
+    await resendApi("/emails", { from, to: [c.owner.email], subject: `[test ${new Date().toISOString().slice(11, 19)}] ${subject}`, text: text.replace(UNSUBSCRIBE, "(link)"), html: html.replace(UNSUBSCRIBE, "#") });
     console.log(`test sent to ${c.owner.email}`);
     return;
   }
