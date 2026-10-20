@@ -183,18 +183,18 @@ const resendApi = async (path: string, body?: unknown) => {
 };
 
 const UNSUBSCRIBE = "{{{RESEND_UNSUBSCRIBE_URL}}}";
-const WAVE = "▁▂▃▅▂▁▃▆▃▁▂▅▃▂▁";
+const wave = () => Array.from({ length: 32 }, () => "▁▂▃▄▅▆▇█"[Math.floor(Math.random() * 8)]).join("");
 const escapeHtml = (s: string) => s.replace(/[&<>"]/g, (ch) => `&${{ "&": "amp", "<": "lt", ">": "gt", '"': "quot" }[ch]};`);
 const linkify = (s: string) => escapeHtml(s).replace(/https?:\/\/[^\s<]+/g, (u) => `<a href="${u}">${u}</a>`);
 
-// The HTML part exists for its hidden preheader: inbox previews show the wave
+// The HTML part exists for its hidden preheader: inbox previews show the header wave
 // and invisible padding instead of the first lines of the update.
-const updateHtml = (body: string, archiveUrl?: string) =>
-  `<div style="display:none;max-height:0;overflow:hidden">${WAVE}${"&#847;&zwnj;&nbsp;".repeat(120)}</div>` +
+const updateHtml = (body: string, header: string, archiveUrl?: string) =>
+  `<div style="display:none;max-height:0;overflow:hidden">${header}${"&#847;&zwnj;&nbsp;".repeat(120)}</div>` +
   `<div style="font:16px/1.5 system-ui,sans-serif;max-width:36rem">` +
-  `<p>${WAVE}</p>` +
+  `<p>${header}</p>` +
   body.split(/\n{2,}/).map((p) => `<p>${linkify(p).replace(/\n/g, "<br>")}</p>`).join("") +
-  `<p>${WAVE}<br>` +
+  `<p>` +
   (archiveUrl ? `<a href="${archiveUrl}">Previous updates</a> · ` : "") +
   `<a href="${UNSUBSCRIBE}">Unsubscribe</a></p></div>`;
 
@@ -213,8 +213,9 @@ const update = async (c: Config, [sub, name]: string[]) => {
   const subject = `Life update - ${title}`;
   const archive = c.updates.archiveUrl ? `Previous updates: ${c.updates.archiveUrl} · ` : "";
   const body = m[2]!.trim();
-  const text = `${WAVE}\n\n${body}\n\n${WAVE}\n${archive}Unsubscribe: ${UNSUBSCRIBE}`;
-  const html = updateHtml(body, c.updates.archiveUrl);
+  const header = wave();
+  const text = `${header}\n\n${body}\n\n${archive}Unsubscribe: ${UNSUBSCRIBE}`;
+  const html = updateHtml(body, header, c.updates.archiveUrl);
   const from = c.updates.from;
 
   // A unique test subject starts a new Gmail thread, which would otherwise fold the repeated footer.
