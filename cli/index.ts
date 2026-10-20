@@ -195,8 +195,8 @@ const updateHtml = (body: string, archiveUrl?: string) =>
   `<p>${WAVE}</p>` +
   body.split(/\n{2,}/).map((p) => `<p>${linkify(p).replace(/\n/g, "<br>")}</p>`).join("") +
   `<p>${WAVE}<br>` +
-  (archiveUrl ? `Anteriores: <a href="${archiveUrl}">${escapeHtml(archiveUrl)}</a><br>` : "") +
-  `<a href="${UNSUBSCRIBE}">Darse de baja</a></p></div>`;
+  (archiveUrl ? `<a href="${archiveUrl}">Previous updates</a> · ` : "") +
+  `<a href="${UNSUBSCRIBE}">Unsubscribe</a></p></div>`;
 
 // Life update: plain-text Resend broadcast of the blog's content/updates/<name>.md
 // (Spanish original) to the configured segment.
@@ -211,9 +211,9 @@ const update = async (c: Config, [sub, name]: string[]) => {
   const { title } = parseYaml(m[1]!) as { title?: string };
   if (!title) throw new Error(`${file}: frontmatter needs 'title'`);
   const subject = `Life update - ${title}`;
-  const archive = c.updates.archiveUrl ? `Anteriores: ${c.updates.archiveUrl}\n` : "";
+  const archive = c.updates.archiveUrl ? `Previous updates: ${c.updates.archiveUrl} · ` : "";
   const body = m[2]!.trim();
-  const text = `${WAVE}\n\n${body}\n\n${WAVE}\n${archive}Darse de baja: ${UNSUBSCRIBE}`;
+  const text = `${WAVE}\n\n${body}\n\n${WAVE}\n${archive}Unsubscribe: ${UNSUBSCRIBE}`;
   const html = updateHtml(body, c.updates.archiveUrl);
   const from = c.updates.from;
 
