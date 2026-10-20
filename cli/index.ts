@@ -183,7 +183,20 @@ const resendApi = async (path: string, body?: unknown) => {
 };
 
 const UNSUBSCRIBE = "{{{RESEND_UNSUBSCRIBE_URL}}}";
-const HEADER = "---";
+const WAVE = "▁▂▃▅▂▁▃▆▃▁▂▅▃▂▁";
+const escapeHtml = (s: string) => s.replace(/[&<>"]/g, (ch) => `&${{ "&": "amp", "<": "lt", ">": "gt", '"': "quot" }[ch]};`);
+const linkify = (s: string) => escapeHtml(s).replace(/https?:\/\/[^\s<]+/g, (u) => `<a href="${u}">${u}</a>`);
+
+// The HTML part exists for its hidden preheader: inbox previews show the wave
+// and invisible padding instead of the first lines of the update.
+const updateHtml = (body: string, archiveUrl?: string) =>
+  `<div style="display:none;max-height:0;overflow:hidden">${WAVE}${"&#847;&zwnj;&nbsp;".repeat(120)}</div>` +
+  `<div style="font:16px/1.5 system-ui,sans-serif;max-width:36rem">` +
+  `<p>${WAVE}</p>` +
+  body.split(/\n{2,}/).map((p) => `<p>${linkify(p).replace(/\n/g, "<br>")}</p>`).join("") +
+  `<p>${WAVE}<br>` +
+  (archiveUrl ? `Anteriores: <a href="${archiveUrl}">${escapeHtml(archiveUrl)}</a><br>` : "") +
+  `<a href="${UNSUBSCRIBE}">Darse de baja</a></p></div>`;
 
 // Life update: plain-text Resend broadcast of the blog's content/updates/<name>.md
 // (Spanish original) to the configured segment.
@@ -199,11 +212,13 @@ const update = async (c: Config, [sub, name]: string[]) => {
   if (!title) throw new Error(`${file}: frontmatter needs 'title'`);
   const subject = `Life update - ${title}`;
   const archive = c.updates.archiveUrl ? `Anteriores: ${c.updates.archiveUrl}\n` : "";
-  const text = `${HEADER}\n\n${m[2]!.trim()}\n\n--\n${archive}Darse de baja: ${UNSUBSCRIBE}`;
+  const body = m[2]!.trim();
+  const text = `${WAVE}\n\n${body}\n\n${WAVE}\n${archive}Darse de baja: ${UNSUBSCRIBE}`;
+  const html = updateHtml(body, c.updates.archiveUrl);
   const from = c.updates.from;
 
   if (process.argv.includes("--test")) {
-    await resendApi("/emails", { from, to: [c.owner.email], subject: `[test] ${subject}`, text: text.replace(UNSUBSCRIBE, "(link)") });
+    await resendApi("/emails", { from, to: [c.owner.email], subject: `[test] ${subject}`, text: text.replace(UNSUBSCRIBE, "(link)"), html: html.replace(UNSUBSCRIBE, "#") });
     console.log(`test sent to ${c.owner.email}`);
     return;
   }
@@ -223,7 +238,7 @@ const update = async (c: Config, [sub, name]: string[]) => {
   console.log(`From: ${from}\nSubject: ${subject}\n\n${text}\n`);
   if (prompt(`Send to ${n} subscribed contacts? [y/N]`)?.trim().toLowerCase() !== "y") return console.log("cancelled");
   const draft =
-    existing ?? (await resendApi("/broadcasts", { name: broadcastName, segment_id: c.updates.segmentId, topic_id: c.updates.topicId, from, reply_to: c.owner.email, subject, text }));
+    existing ?? (await resendApi("/broadcasts", { name: broadcastName, segment_id: c.updates.segmentId, topic_id: c.updates.topicId, from, reply_to: c.owner.email, subject, text, html }));
   await resendApi(`/broadcasts/${draft.id}/send`, {});
   console.log(`sent ${broadcastName}`);
 };
