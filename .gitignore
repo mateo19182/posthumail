@@ -5,4 +5,3 @@ posthumail.config.ts
 posthumail.*.config.ts
 messages/
 messages.test/
-updates/

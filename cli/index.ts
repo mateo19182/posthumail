@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, readdirSync, readFileSync } from "node:fs";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import { parse as parseYaml } from "yaml";
 import type { MessageBody, StoredMessage } from "../src/app.ts";
@@ -182,38 +182,19 @@ const resendApi = async (path: string, body?: unknown) => {
   return data;
 };
 
-// The short public version goes to the blog repo, which lists it on the Now page.
-const publishToBlog = (name: string, subject: string, blog: string) => {
-  const repo = resolve(process.env.POSTHUMAIL_BLOG ?? join(process.env.HOME!, "projects/blog-19182"));
-  const git = (...a: string[]) => {
-    const r = Bun.spawnSync(["git", "-C", repo, ...a], { stdio: ["ignore", "pipe", "pipe"] });
-    if (r.exitCode !== 0) throw new Error(`git ${a.join(" ")}: ${r.stderr.toString()}`);
-    return r.stdout.toString();
-  };
-  if (git("status", "--porcelain").trim()) throw new Error(`${repo} has uncommitted changes; publish skipped`);
-  git("pull", "--ff-only", "-q");
-  const q = /^(\d{4})-q([1-4])$/.exec(name);
-  const title = q ? `Q${q[2]} ${q[1]}` : subject;
-  const path = `content/updates/${name}.md`;
-  mkdirSync(join(repo, "content/updates"), { recursive: true });
-  writeFileSync(join(repo, path), `---\ntitle: ${title}\ndate: ${new Date().toISOString().slice(0, 10)}\n---\n${blog.trim()}\n`);
-  git("add", path);
-  git("commit", "-q", "-m", `Quarterly update ${title}`);
-  git("push", "-q");
-  console.log(`published ${path}`);
-};
-
 const UNSUBSCRIBE = "{{{RESEND_UNSUBSCRIBE_URL}}}";
 
-// Quarterly update: plain-text Resend broadcast to the configured segment.
+// Quarterly update: plain-text Resend broadcast to the configured segment. The blog repo
+// owns the updates; the email text is its gitignored private/updates/<name>.md.
 // `--test` sends it only to the owner. Re-running reuses the draft and never sends twice.
 const update = async (c: Config, [sub, name]: string[]) => {
   if (sub !== "send" || !name) throw new Error("usage: posthumail update send <name> [--test]");
   if (!c.updates) throw new Error("config has no `updates` section");
-  const file = join(resolve(process.env.POSTHUMAIL_UPDATES ?? "updates"), `${name}.md`);
+  const blog = resolve(process.env.POSTHUMAIL_BLOG ?? join(process.env.HOME!, "projects/blog-19182"));
+  const file = join(blog, "private/updates", `${name}.md`);
   const m = /^---\n([\s\S]*?)\n---\n?([\s\S]*)$/.exec(readFileSync(file, "utf8"));
   if (!m) throw new Error(`${file}: missing frontmatter`);
-  const { subject, blog } = parseYaml(m[1]!) as { subject?: string; blog?: string };
+  const { subject } = parseYaml(m[1]!) as { subject?: string };
   if (!subject) throw new Error(`${file}: frontmatter needs 'subject'`);
   const archive = c.updates.archiveUrl ? `Anteriores: ${c.updates.archiveUrl}\n` : "";
   const text = `${m[2]!.trim()}\n\n--\n${archive}Darse de baja: ${UNSUBSCRIBE}`;
@@ -233,14 +214,11 @@ const update = async (c: Config, [sub, name]: string[]) => {
   const contacts = (await resendApi(`/contacts?segment_id=${c.updates.segmentId}&limit=100`)).data as any[];
   const n = contacts.filter((x) => !x.unsubscribed).length;
   console.log(`From: ${from}\nSubject: ${subject}\n\n${text}\n`);
-  if (blog) console.log(`Blog (Now page):\n${blog.trim()}\n`);
-  const question = `Send to ${n} subscribed contacts${blog ? " and publish to the blog" : ""}? [y/N]`;
-  if (prompt(question)?.trim().toLowerCase() !== "y") return console.log("cancelled");
+  if (prompt(`Send to ${n} subscribed contacts? [y/N]`)?.trim().toLowerCase() !== "y") return console.log("cancelled");
   const draft =
     existing ?? (await resendApi("/broadcasts", { name: broadcastName, segment_id: c.updates.segmentId, from, reply_to: c.owner.email, subject, text }));
   await resendApi(`/broadcasts/${draft.id}/send`, {});
   console.log(`sent ${broadcastName}`);
-  if (blog) publishToBlog(name, subject, blog);
   if (/^\d{4}-q[1-4]$/.test(name)) await admin(c, "update-sent", { method: "POST", body: JSON.stringify({ quarter: name }) });
 };
 

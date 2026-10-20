@@ -42,10 +42,10 @@ Plain text.
 
 `sync` encrypts each message locally. Only the Worker can decrypt it.
 
-Quarterly updates go out on the solstices and equinoxes, with a reminder a week before:
+Quarterly updates go out on the solstices and equinoxes, with a reminder a week before. The blog repo owns them; posthumail only sends the email, read from the blog's gitignored `private/updates/<quarter>.md` (`subject:` frontmatter, plain-text body):
 
 ```sh
-bun cli update send 2026-q4 --test   # then without --test; an optional `blog:` field also publishes to the blog
+bun cli update send 2026-q4 --test   # then without --test
 ```
 
 Back up `.env` and `.alchemy/`. Run a test stage end to end once a year.
