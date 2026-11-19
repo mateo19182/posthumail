@@ -382,14 +382,61 @@ export const tick = async (env: Env, now = Date.now()) => {
 
 // ---------- HTTP ----------
 
-const html = (title: string, body: string, status = 200) =>
+const STYLE =
+  `body{font:18px/1.5 system-ui,sans-serif;max-width:32rem;margin:3rem auto;padding:0 1rem;color:#222}` +
+  `button{font:inherit;padding:.6rem 1.2rem;margin:.3rem .3rem 0 0;border-radius:.5rem;border:1px solid #888;background:#fff;cursor:pointer}` +
+  `a{color:inherit}footer{margin-top:2rem;font-size:.85em;opacity:.75}` +
+  `@media(prefers-color-scheme:dark){body{background:#111;color:#eee}button{background:#222;color:#eee}}`;
+
+// Every page but the landing is per-person or tokenized, so it stays out of search engines.
+const page = (o: { title: string; heading?: string; head?: string; body: string; status?: number }) =>
   new Response(
     `<!doctype html><html lang="es"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">` +
-      `<title>${title}</title><style>body{font:18px/1.5 system-ui,sans-serif;max-width:32rem;margin:3rem auto;padding:0 1rem;color:#222}` +
-      `button{font:inherit;padding:.6rem 1.2rem;margin:.3rem .3rem 0 0;border-radius:.5rem;border:1px solid #888;background:#fff;cursor:pointer}` +
-      `@media(prefers-color-scheme:dark){body{background:#111;color:#eee}button{background:#222;color:#eee}}</style>` +
-      `<h1>${title}</h1>${body}</html>`,
-    { status, headers: { "content-type": "text/html; charset=utf-8" } },
+      `<title>${o.title}</title>${o.head ?? `<meta name="robots" content="noindex">`}<style>${STYLE}</style>` +
+      `<h1>${o.heading ?? o.title}</h1>${o.body}</html>`,
+    { status: o.status ?? 200, headers: { "content-type": "text/html; charset=utf-8" } },
+  );
+
+const html = (title: string, body: string, status = 200) => page({ title, body, status });
+
+const REPO = "https://github.com/mateo19182/posthumail";
+const BLOG = "https://blog.m19182.dev/";
+
+const landing = (site: string) => {
+  const { title, description } = T.landing;
+  const url = `${site}/`;
+  const head = [
+    `<meta name="description" content="${esc(description)}">`,
+    `<meta name="author" content="${T.landing.author}">`,
+    `<link rel="canonical" href="${url}">`,
+    `<meta property="og:type" content="website">`,
+    `<meta property="og:site_name" content="posthumail">`,
+    `<meta property="og:title" content="${esc(title)}">`,
+    `<meta property="og:description" content="${esc(description)}">`,
+    `<meta property="og:url" content="${url}">`,
+    `<meta property="og:locale" content="es_ES">`,
+    `<meta name="twitter:card" content="summary">`,
+  ].join("");
+  const body =
+    T.landing.body.map((p) => `<p>${esc(p)}</p>`).join("") +
+    `<footer><a href="${REPO}">${T.landing.code}</a> · <a href="${BLOG}">${T.landing.author}</a></footer>`;
+  return page({ title: esc(title), heading: "posthumail", head, body });
+};
+
+const text = (body: string, type: string) =>
+  new Response(body, { headers: { "content-type": `${type}; charset=utf-8` } });
+
+// Token and action paths are never linked publicly; keep crawlers off them anyway.
+const robots = (site: string) =>
+  text(
+    ["User-agent: *", "Allow: /", "Disallow: /c/", "Disallow: /t/", "Disallow: /f/", "Disallow: /tg", "Disallow: /admin/", "", `Sitemap: ${site}/sitemap.xml`, ""].join("\n"),
+    "text/plain",
+  );
+
+const sitemap = (site: string) =>
+  text(
+    `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>${site}/</loc></url></urlset>\n`,
+    "application/xml",
   );
 
 const esc = (s: string) => s.replace(/[&<>"]/g, (ch) => `&#${ch.charCodeAt(0)};`);
@@ -440,6 +487,7 @@ const handleFile = async (env: Env, token: string) => {
   return new Response(obj.body as unknown as ReadableStream, {
     headers: {
       "content-type": obj.httpMetadata?.contentType ?? "application/octet-stream",
+      "x-robots-tag": "noindex",
       "content-disposition": `attachment; filename*=UTF-8''${encodeURIComponent(obj.customMetadata?.name ?? key!)}`,
     },
   });
@@ -605,6 +653,12 @@ export const fetchHandler = async (env: Env, req: Request): Promise<Response> =>
     return new Response(null, { status: 401 });
 
   const c = await getConfig(env);
+  const site = c ? baseUrl(c) : url.origin;
+  if (req.method === "GET" || req.method === "HEAD") {
+    if (!first) return landing(site);
+    if (url.pathname === "/robots.txt") return robots(site);
+    if (url.pathname === "/sitemap.xml") return sitemap(site);
+  }
   if (!c) return html("posthumail", "", 503);
 
   if (first === "tg" && req.method === "POST") {
@@ -619,5 +673,5 @@ export const fetchHandler = async (env: Env, req: Request): Promise<Response> =>
   if (first === "c" && rest[0]) return handleCheckinLink(env, c, rest[0]);
   if (first === "t" && rest[0]) return handleTrusteeLink(env, c, req, rest[0]);
   if (first === "f" && rest[0]) return handleFile(env, rest[0]);
-  return html("posthumail", "");
+  return html(T.page.notFound, "", 404);
 };
