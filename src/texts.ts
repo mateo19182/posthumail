@@ -56,4 +56,17 @@ export const page = {
   trustee: (ownerName: string) => ({ title: `¿${ownerName} está bien?` }),
   invalid: "Enlace no válido.",
   released: "Los mensajes ya se han enviado.",
+  notFound: "No encontrado.",
+};
+
+export const landing = {
+  title: "posthumail: dead man's switch por email y Telegram",
+  description:
+    "Dead man's switch autoalojado: check-in mensual por email y Telegram; si dejas de responder y tus contactos de confianza lo confirman, envía tus mensajes.",
+  body: [
+    "Un dead man's switch autoalojado en el plan gratuito de Cloudflare. Cada mes te pide un check-in por email y Telegram; basta un clic para reiniciarlo.",
+    "Si dejas de responder, pregunta uno a uno a tus contactos de confianza. Solo cuando varios confirman tu fallecimiento, y tras un último aviso de 48 horas, envía los mensajes que dejaste escritos y cifrados.",
+  ],
+  code: "Código en GitHub",
+  author: "Mateo Amado Ares",
 };

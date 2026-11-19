@@ -169,6 +169,25 @@ const hours = async (from: number, to: number) => {
   }
 };
 
+test("only the landing is indexable; robots.txt and sitemap.xml are served", async () => {
+  await setup();
+  const home = await (await call("/")).text();
+  expect(home).toContain('<link rel="canonical" href="https://p.x.test/">');
+  expect(home).toContain('<meta name="description"');
+  expect(home).not.toContain("noindex");
+  const robots = await call("/robots.txt");
+  expect(robots.headers.get("content-type")).toStartWith("text/plain");
+  const rules = await robots.text();
+  expect(rules).toContain("Disallow: /t/\nDisallow: /f/");
+  expect(rules).toContain("Sitemap: https://p.x.test/sitemap.xml");
+  expect(await (await call("/sitemap.xml")).text()).toContain("<loc>https://p.x.test/</loc>");
+  const trustee = await (await call(`/t/${await sign(env.linkSecret, "trustee", "ana")}`)).text();
+  expect(trustee).toContain('<meta name="robots" content="noindex">');
+  const missing = await call("/nope");
+  expect(missing.status).toBe(404);
+  expect(await missing.text()).toContain("noindex");
+});
+
 test("admin requires token", async () => {
   expect((await call("/admin/status")).status).toBe(401);
   expect((await call("/tg", { method: "POST", body: "{}" })).status).toBe(401);
